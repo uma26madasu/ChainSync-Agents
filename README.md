@@ -6,7 +6,7 @@ ChainSync is a comprehensive enterprise integration platform that combines speci
 
 ## 🤖 Specialized AI Agents
 
-ChainSync includes 6 specialized AI agents, each designed for specific enterprise needs:
+ChainSync includes 7 specialized AI agents, each designed for specific enterprise needs:
 
 ### 1. **Continuous Learning Agent**
 Learns from interactions and improves system performance over time.
@@ -98,6 +98,34 @@ Breaks down complex problems and reasons through them step-by-step.
 - Decision support
 - Analytical tasks requiring multiple steps
 
+### 7. **Meeting Context Agent (Slotify Integration)**
+Provides context for meetings scheduled by Slotify based on ChainSync alerts.
+
+**Capabilities:**
+- Links Slotify meetings to ChainSync alerts
+- Explains why meetings were automatically scheduled
+- Generates recommended discussion points
+- Provides pre-meeting summaries for attendees
+- Calculates meeting urgency based on alert severity
+- Suggests appropriate attendees based on alert type
+- Generates post-meeting summaries with action items
+
+**Use Cases:**
+- Automated meeting context from system alerts
+- Pre-meeting briefings for stakeholders
+- Alert-driven meeting scheduling explanation
+- Post-incident review meeting preparation
+- Compliance violation review meetings
+
+**Supported Alert Types:**
+- Compliance Violations
+- System Failures
+- Performance Degradation
+- Security Incidents
+- Data Quality Issues
+- Integration Failures
+- Capacity Warnings
+
 ## 🎯 Multi-Agent Workflows
 
 The agents work together in coordinated workflows:
@@ -120,6 +148,15 @@ The agents work together in coordinated workflows:
 - Maintains conversation context
 - Reasons through complex problems
 - Learns from solution effectiveness
+
+### Alert to Meeting (Slotify Integration)
+**Agents:** RCA + Compliance + Meeting Context + Learning
+- Processes ChainSync alerts automatically
+- Performs root cause analysis on the alert
+- Checks for compliance implications
+- Creates Slotify meeting with full context explanation
+- Generates discussion points and pre-meeting summary
+- Learns from alert patterns for future improvements
 
 ## 🏗️ Architecture Overview
 
@@ -168,7 +205,7 @@ python main.py
 ```
 
 This will demonstrate:
-- All 6 specialized agents
+- All 7 specialized agents (including Meeting Context Agent for Slotify)
 - Multi-agent workflows
 - Parallel agent execution
 - System status and capabilities
@@ -214,6 +251,24 @@ solution = await orchestrator.route_request('reasoning', {
     'problem': 'How to reduce energy consumption?',
     'max_steps': 5
 })
+
+# Meeting Context (Slotify Integration)
+meeting_context = await orchestrator.route_request('meeting', {
+    'meeting_data': {
+        'meeting_id': 'slotify-123',
+        'title': 'Critical System Review',
+        'scheduled_time': '2025-11-25T10:00:00Z',
+        'attendees': ['devops@company.com', 'sre@company.com']
+    },
+    'alert_data': {
+        'alert_id': 'alert-456',
+        'alert_type': 'system_failure',
+        'severity': 'critical',
+        'description': 'Database connection pool exhausted',
+        'affected_systems': ['API Gateway', 'User Service'],
+        'detected_at': '2025-11-24T15:30:00Z'
+    }
+})
 ```
 
 ### Using Multi-Agent Workflows
@@ -237,6 +292,31 @@ compliance_workflow = await orchestrator.multi_agent_workflow(
         'frameworks': ['GDPR', 'SOC2']
     }
 )
+
+# Alert to Meeting (Slotify Integration)
+alert_meeting = await orchestrator.multi_agent_workflow(
+    'alert_to_meeting',
+    {
+        'alert_data': {
+            'alert_id': 'chainsync-alert-789',
+            'alert_type': 'compliance_violation',
+            'severity': 'high',
+            'description': 'GDPR data retention policy exceeded for customer records',
+            'affected_systems': ['Customer Database', 'Backup Systems'],
+            'context': {
+                'violation_type': 'data_retention',
+                'records_affected': 15000,
+                'days_exceeded': 30
+            }
+        },
+        'meeting_data': {
+            'meeting_id': 'slotify-meeting-001',
+            'attendees': ['compliance@company.com', 'legal@company.com']
+        }
+    }
+)
+# Returns: meeting context, RCA results, compliance check, and full explanation
+print(alert_meeting['meeting_explanation'])
 ```
 
 ### Direct Agent Access
@@ -297,7 +377,7 @@ ChainSync-Agents/
 │   ├── config.py                   # Configuration management
 │   ├── ai_agent.py                 # Legacy AI agent (deprecated)
 │   ├── domain_manager.py           # Domain-specific logic handler
-│   ├── specialized_agents.py       # 6 specialized AI agents
+│   ├── specialized_agents.py       # 7 specialized AI agents
 │   └── agent_orchestrator.py       # Multi-agent coordination
 ├── docs/                           # Documentation
 │   ├── architecture.md             # Architecture design

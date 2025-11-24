@@ -13,7 +13,8 @@ from .specialized_agents import (
     NaturalLanguageQueryAgent,
     ComplianceAutopilotAgent,
     MemoryEnabledAgent,
-    MultiStepReasoningAgent
+    MultiStepReasoningAgent,
+    MeetingContextAgent
 )
 
 
@@ -36,7 +37,8 @@ class AgentOrchestrator:
             'natural_language_query': NaturalLanguageQueryAgent(),
             'compliance_autopilot': ComplianceAutopilotAgent(),
             'memory_enabled': MemoryEnabledAgent(),
-            'multi_step_reasoning': MultiStepReasoningAgent()
+            'multi_step_reasoning': MultiStepReasoningAgent(),
+            'meeting_context': MeetingContextAgent()
         }
 
         self.orchestration_history = []
@@ -69,7 +71,8 @@ class AgentOrchestrator:
             'natural_language_query': 'Processes natural language queries against data',
             'compliance_autopilot': 'Monitors and ensures regulatory compliance',
             'memory_enabled': 'Maintains conversation history and context',
-            'multi_step_reasoning': 'Breaks down complex problems into steps'
+            'multi_step_reasoning': 'Breaks down complex problems into steps',
+            'meeting_context': 'Provides context for Slotify meetings based on ChainSync alerts'
         }
 
     async def route_request(self, request_type: str, request_data: Dict[str, Any]) -> Dict:
@@ -96,7 +99,10 @@ class AgentOrchestrator:
             'conversation': 'memory_enabled',
             'problem_solving': 'multi_step_reasoning',
             'reasoning': 'multi_step_reasoning',
-            'learning': 'continuous_learning'
+            'learning': 'continuous_learning',
+            'meeting': 'meeting_context',
+            'meeting_context': 'meeting_context',
+            'slotify': 'meeting_context'
         }
 
         agent_name = routing_map.get(request_type.lower())
@@ -152,6 +158,12 @@ class AgentOrchestrator:
                     request_data.get('feedback_score')
                 )
 
+            elif agent_name == 'meeting_context':
+                return await agent.process_slotify_meeting(
+                    request_data.get('meeting_data', {}),
+                    request_data.get('alert_data', {})
+                )
+
         except Exception as e:
             return {
                 'error': f'Agent execution failed: {str(e)}',
@@ -187,7 +199,8 @@ class AgentOrchestrator:
         workflows = {
             'intelligent_incident_response': self._intelligent_incident_response,
             'compliance_with_rca': self._compliance_with_rca,
-            'conversational_problem_solving': self._conversational_problem_solving
+            'conversational_problem_solving': self._conversational_problem_solving,
+            'alert_to_meeting': self._alert_to_meeting_workflow
         }
 
         workflow_func = workflows.get(workflow_name)
@@ -344,6 +357,92 @@ class AgentOrchestrator:
             'initial_chat': chat_result,
             'problem_solution': solution_result,
             'solution_delivery': solution_chat,
+            'timestamp': datetime.now().isoformat()
+        }
+
+    async def _alert_to_meeting_workflow(self, data: Dict) -> Dict:
+        """
+        Workflow: Process ChainSync alert and create Slotify meeting with full context.
+
+        Steps:
+        1. RCA agent analyzes the alert to understand root cause
+        2. Compliance agent checks for any compliance implications
+        3. Meeting Context agent creates meeting with full context explanation
+        4. Learning agent records the alert pattern
+
+        Args:
+            data: Dict containing:
+                - alert_data: ChainSync alert information
+                - meeting_data: Slotify meeting details (optional, can be auto-generated)
+
+        Returns:
+            Dict with complete workflow results including meeting context
+        """
+        print("[Workflow] Alert to Meeting")
+
+        alert_data = data.get('alert_data', {})
+        meeting_data = data.get('meeting_data', {})
+
+        # Auto-generate meeting data if not provided
+        if not meeting_data.get('meeting_id'):
+            meeting_data['meeting_id'] = f"slotify_meeting_{datetime.now().timestamp()}"
+        if not meeting_data.get('title'):
+            alert_type = alert_data.get('alert_type', 'Unknown')
+            severity = alert_data.get('severity', 'medium')
+            meeting_data['title'] = f"[{severity.upper()}] {alert_type.replace('_', ' ').title()} Review"
+        if not meeting_data.get('scheduled_time'):
+            meeting_data['scheduled_time'] = datetime.now().isoformat()
+
+        # Step 1: Root cause analysis on the alert
+        rca_agent = self.agents['root_cause_analysis']
+        rca_result = await rca_agent.analyze_failure({
+            'error_message': alert_data.get('description', ''),
+            'error_type': alert_data.get('alert_type', 'unknown'),
+            'context': alert_data.get('context', {}),
+            'impact': alert_data.get('severity', 'medium')
+        })
+
+        # Enrich alert data with RCA results
+        enriched_alert = {
+            **alert_data,
+            'root_cause_analysis': rca_result.get('root_cause'),
+            'recommendations': rca_result.get('recommendations', [])
+        }
+
+        # Step 2: Check for compliance implications
+        compliance_agent = self.agents['compliance_autopilot']
+        compliance_result = await compliance_agent.check_compliance({
+            'operation_type': alert_data.get('alert_type', 'system_alert'),
+            'alert_data': alert_data,
+            'root_cause': rca_result.get('root_cause')
+        }, alert_data.get('compliance_frameworks'))
+
+        # Add compliance info to enriched alert
+        enriched_alert['compliance_implications'] = compliance_result
+
+        # Step 3: Create meeting context with MeetingContextAgent
+        meeting_agent = self.agents['meeting_context']
+        meeting_context = await meeting_agent.process_slotify_meeting(
+            meeting_data,
+            enriched_alert
+        )
+
+        # Step 4: Learn from this alert pattern
+        learning_agent = self.agents['continuous_learning']
+        await learning_agent.learn_from_interaction({
+            'query': f"Alert: {alert_data.get('alert_type')} - {alert_data.get('description', '')}",
+            'response': meeting_context,
+            'context': {'alert_to_meeting': True, 'severity': alert_data.get('severity')}
+        })
+
+        return {
+            'workflow': 'alert_to_meeting',
+            'alert_id': alert_data.get('alert_id'),
+            'meeting_id': meeting_data.get('meeting_id'),
+            'root_cause_analysis': rca_result,
+            'compliance_check': compliance_result,
+            'meeting_context': meeting_context,
+            'meeting_explanation': await meeting_agent.explain_meeting(meeting_data.get('meeting_id')),
             'timestamp': datetime.now().isoformat()
         }
 
