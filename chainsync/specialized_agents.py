@@ -729,3 +729,341 @@ class MultiStepReasoningAgent(BaseAgent):
                 return explanation
 
         return "No reasoning history found for this problem."
+
+
+class MeetingContextAgent(BaseAgent):
+    """
+    Agent that provides context for meetings scheduled by Slotify based on ChainSync alerts.
+
+    Capabilities:
+    - Links Slotify meetings to ChainSync alerts
+    - Explains why meetings were scheduled
+    - Provides recommended discussion points
+    - Generates meeting summaries and action items
+    - Tracks alert-to-meeting relationships
+    """
+
+    def __init__(self):
+        super().__init__("MeetingContextAgent")
+        self.alert_meeting_map = {}  # Maps alert IDs to meeting IDs
+        self.meeting_history = []
+        self.alert_types = {
+            'compliance_violation': {
+                'severity_weight': 0.9,
+                'category': 'Compliance',
+                'typical_attendees': ['Compliance Officer', 'Legal', 'IT Security']
+            },
+            'system_failure': {
+                'severity_weight': 1.0,
+                'category': 'Operations',
+                'typical_attendees': ['DevOps', 'Engineering Lead', 'SRE']
+            },
+            'performance_degradation': {
+                'severity_weight': 0.7,
+                'category': 'Performance',
+                'typical_attendees': ['Engineering', 'DevOps', 'Product']
+            },
+            'security_incident': {
+                'severity_weight': 1.0,
+                'category': 'Security',
+                'typical_attendees': ['Security Team', 'CISO', 'Legal']
+            },
+            'data_quality_issue': {
+                'severity_weight': 0.6,
+                'category': 'Data',
+                'typical_attendees': ['Data Engineering', 'Analytics', 'QA']
+            },
+            'integration_failure': {
+                'severity_weight': 0.8,
+                'category': 'Integration',
+                'typical_attendees': ['Integration Team', 'MuleSoft Admin', 'API Team']
+            },
+            'capacity_warning': {
+                'severity_weight': 0.5,
+                'category': 'Infrastructure',
+                'typical_attendees': ['Infrastructure', 'DevOps', 'Finance']
+            }
+        }
+
+    async def process_slotify_meeting(self, meeting_data: Dict[str, Any], alert_data: Dict[str, Any]) -> Dict:
+        """
+        Process a Slotify meeting and provide context based on ChainSync alert.
+
+        Args:
+            meeting_data: Meeting details from Slotify (id, title, scheduled_time, attendees)
+            alert_data: ChainSync alert that triggered the meeting
+
+        Returns:
+            Dict with meeting context, explanation, and discussion points
+        """
+        self.log(f"Processing meeting: {meeting_data.get('title', 'Untitled')} for alert: {alert_data.get('alert_id', 'Unknown')}")
+
+        # Link alert to meeting
+        alert_id = alert_data.get('alert_id', f"alert_{datetime.now().timestamp()}")
+        meeting_id = meeting_data.get('meeting_id', f"meeting_{datetime.now().timestamp()}")
+        self.alert_meeting_map[alert_id] = meeting_id
+
+        # Generate meeting context
+        context = await self._generate_meeting_context(meeting_data, alert_data)
+
+        # Generate discussion points
+        discussion_points = await self._generate_discussion_points(alert_data)
+
+        # Generate pre-meeting summary
+        pre_meeting_summary = await self._generate_pre_meeting_summary(alert_data)
+
+        # Determine urgency and priority
+        urgency = self._calculate_urgency(alert_data)
+
+        meeting_context = {
+            'timestamp': datetime.now().isoformat(),
+            'meeting_id': meeting_id,
+            'meeting_title': meeting_data.get('title', 'ChainSync Alert Review'),
+            'scheduled_time': meeting_data.get('scheduled_time'),
+            'attendees': meeting_data.get('attendees', []),
+            'alert_id': alert_id,
+            'alert_type': alert_data.get('alert_type', 'unknown'),
+            'alert_severity': alert_data.get('severity', 'medium'),
+            'why_scheduled': context,
+            'discussion_points': discussion_points,
+            'pre_meeting_summary': pre_meeting_summary,
+            'urgency': urgency,
+            'recommended_duration': self._recommend_duration(alert_data),
+            'suggested_attendees': self._suggest_attendees(alert_data),
+            'agent': self.agent_name
+        }
+
+        self.meeting_history.append(meeting_context)
+        return meeting_context
+
+    async def _generate_meeting_context(self, meeting_data: Dict, alert_data: Dict) -> str:
+        """Generate explanation for why the meeting was scheduled."""
+        alert_type = alert_data.get('alert_type', 'unknown')
+        severity = alert_data.get('severity', 'medium')
+        description = alert_data.get('description', 'No description provided')
+        affected_systems = alert_data.get('affected_systems', [])
+        detected_at = alert_data.get('detected_at', datetime.now().isoformat())
+
+        messages = [
+            {"role": "system", "content": """You are an AI assistant that explains why meetings were automatically scheduled based on system alerts.
+Provide clear, concise explanations that help attendees understand:
+1. What triggered this meeting
+2. Why it requires immediate attention
+3. What the business impact might be
+Keep the explanation professional and actionable."""},
+            {"role": "user", "content": f"""Generate a meeting context explanation for:
+
+Alert Type: {alert_type}
+Severity: {severity}
+Description: {description}
+Affected Systems: {', '.join(affected_systems) if affected_systems else 'Not specified'}
+Detected At: {detected_at}
+Meeting Title: {meeting_data.get('title', 'Alert Review')}
+
+Explain why this meeting was automatically scheduled by Slotify based on this ChainSync alert."""}
+        ]
+
+        return await self._call_openai(messages, temperature=0.4)
+
+    async def _generate_discussion_points(self, alert_data: Dict) -> List[str]:
+        """Generate recommended discussion points for the meeting."""
+        alert_type = alert_data.get('alert_type', 'unknown')
+        description = alert_data.get('description', '')
+        context = alert_data.get('context', {})
+
+        messages = [
+            {"role": "system", "content": """You are an expert meeting facilitator. Generate 5-7 specific, actionable discussion points for a meeting about a system alert.
+Each point should be:
+- Specific to the alert type
+- Actionable and time-bound where possible
+- Focused on resolution and prevention
+Return only the discussion points as a numbered list."""},
+            {"role": "user", "content": f"""Generate discussion points for a meeting about this alert:
+
+Alert Type: {alert_type}
+Description: {description}
+Additional Context: {json.dumps(context, indent=2)}
+
+Provide specific discussion points that will help the team resolve this issue effectively."""}
+        ]
+
+        response = await self._call_openai(messages, temperature=0.3)
+
+        # Parse discussion points
+        points = [line.strip() for line in response.split('\n') if line.strip() and any(c.isdigit() for c in line[:3])]
+        return points if points else [response]
+
+    async def _generate_pre_meeting_summary(self, alert_data: Dict) -> str:
+        """Generate a pre-meeting summary for attendees."""
+        messages = [
+            {"role": "system", "content": """Generate a brief pre-meeting summary that attendees can read in 2 minutes.
+Include:
+- Alert overview
+- Current status
+- Key metrics/data points
+- Immediate actions already taken (if any)
+- What decisions need to be made"""},
+            {"role": "user", "content": f"""Generate a pre-meeting summary for this alert:
+
+{json.dumps(alert_data, indent=2)}
+
+Keep it concise but informative."""}
+        ]
+
+        return await self._call_openai(messages, temperature=0.4)
+
+    def _calculate_urgency(self, alert_data: Dict) -> Dict:
+        """Calculate meeting urgency based on alert data."""
+        severity = alert_data.get('severity', 'medium').lower()
+        alert_type = alert_data.get('alert_type', 'unknown')
+
+        severity_scores = {'critical': 1.0, 'high': 0.8, 'medium': 0.5, 'low': 0.3}
+        base_score = severity_scores.get(severity, 0.5)
+
+        type_info = self.alert_types.get(alert_type, {'severity_weight': 0.5})
+        final_score = base_score * type_info['severity_weight']
+
+        if final_score >= 0.8:
+            urgency_level = 'CRITICAL'
+            response_time = '< 1 hour'
+        elif final_score >= 0.6:
+            urgency_level = 'HIGH'
+            response_time = '< 4 hours'
+        elif final_score >= 0.4:
+            urgency_level = 'MEDIUM'
+            response_time = '< 24 hours'
+        else:
+            urgency_level = 'LOW'
+            response_time = '< 48 hours'
+
+        return {
+            'level': urgency_level,
+            'score': round(final_score, 2),
+            'recommended_response_time': response_time
+        }
+
+    def _recommend_duration(self, alert_data: Dict) -> str:
+        """Recommend meeting duration based on alert complexity."""
+        severity = alert_data.get('severity', 'medium').lower()
+        affected_systems = alert_data.get('affected_systems', [])
+
+        if severity == 'critical' or len(affected_systems) > 3:
+            return '60 minutes'
+        elif severity == 'high' or len(affected_systems) > 1:
+            return '45 minutes'
+        elif severity == 'medium':
+            return '30 minutes'
+        return '15 minutes'
+
+    def _suggest_attendees(self, alert_data: Dict) -> List[str]:
+        """Suggest attendees based on alert type."""
+        alert_type = alert_data.get('alert_type', 'unknown')
+        type_info = self.alert_types.get(alert_type, {})
+
+        base_attendees = type_info.get('typical_attendees', ['Technical Lead', 'Operations'])
+
+        severity = alert_data.get('severity', 'medium').lower()
+        if severity in ['critical', 'high']:
+            base_attendees.append('Management')
+            if alert_type in ['compliance_violation', 'security_incident']:
+                base_attendees.append('Executive Sponsor')
+
+        return list(set(base_attendees))
+
+    async def get_meeting_context_by_alert(self, alert_id: str) -> Optional[Dict]:
+        """Retrieve meeting context by alert ID."""
+        for meeting in self.meeting_history:
+            if meeting.get('alert_id') == alert_id:
+                return meeting
+        return None
+
+    async def get_meeting_context_by_meeting_id(self, meeting_id: str) -> Optional[Dict]:
+        """Retrieve meeting context by meeting ID."""
+        for meeting in self.meeting_history:
+            if meeting.get('meeting_id') == meeting_id:
+                return meeting
+        return None
+
+    async def generate_post_meeting_summary(self, meeting_id: str, meeting_notes: str, decisions: List[str], action_items: List[Dict]) -> Dict:
+        """
+        Generate a post-meeting summary with action items.
+
+        Args:
+            meeting_id: ID of the meeting
+            meeting_notes: Notes taken during the meeting
+            decisions: List of decisions made
+            action_items: List of action items with assignees and due dates
+
+        Returns:
+            Dict with post-meeting summary
+        """
+        self.log(f"Generating post-meeting summary for: {meeting_id}")
+
+        # Get original meeting context
+        meeting_context = await self.get_meeting_context_by_meeting_id(meeting_id)
+
+        messages = [
+            {"role": "system", "content": """Generate a comprehensive post-meeting summary that includes:
+1. Meeting overview and original alert context
+2. Key decisions made
+3. Action items with owners and deadlines
+4. Next steps and follow-up schedule
+5. Risk mitigation measures agreed upon"""},
+            {"role": "user", "content": f"""Generate post-meeting summary:
+
+Original Alert Context: {json.dumps(meeting_context, indent=2) if meeting_context else 'Not available'}
+
+Meeting Notes: {meeting_notes}
+
+Decisions Made: {json.dumps(decisions, indent=2)}
+
+Action Items: {json.dumps(action_items, indent=2)}"""}
+        ]
+
+        summary = await self._call_openai(messages, temperature=0.4)
+
+        return {
+            'meeting_id': meeting_id,
+            'generated_at': datetime.now().isoformat(),
+            'summary': summary,
+            'decisions': decisions,
+            'action_items': action_items,
+            'original_alert': meeting_context.get('alert_id') if meeting_context else None,
+            'agent': self.agent_name
+        }
+
+    async def explain_meeting(self, meeting_id: str) -> str:
+        """
+        Provide a human-readable explanation of why a meeting was scheduled.
+
+        Args:
+            meeting_id: ID of the meeting to explain
+
+        Returns:
+            Human-readable explanation string
+        """
+        meeting_context = await self.get_meeting_context_by_meeting_id(meeting_id)
+
+        if not meeting_context:
+            return f"No context found for meeting {meeting_id}"
+
+        explanation = f"""
+📅 Meeting: {meeting_context.get('meeting_title', 'Untitled')}
+⏰ Scheduled: {meeting_context.get('scheduled_time', 'TBD')}
+🚨 Urgency: {meeting_context.get('urgency', {}).get('level', 'UNKNOWN')}
+
+📋 Why This Meeting Was Scheduled:
+{meeting_context.get('why_scheduled', 'No context available')}
+
+🎯 Discussion Points:
+{chr(10).join(meeting_context.get('discussion_points', ['No discussion points generated']))}
+
+👥 Suggested Attendees:
+{', '.join(meeting_context.get('suggested_attendees', ['Not specified']))}
+
+⏱️ Recommended Duration: {meeting_context.get('recommended_duration', '30 minutes')}
+
+📊 Pre-Meeting Summary:
+{meeting_context.get('pre_meeting_summary', 'No summary available')}
+"""
+        return explanation
