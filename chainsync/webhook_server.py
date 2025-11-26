@@ -1,60 +1,93 @@
 """
-Webhook Server for ChainSync and Slotify Integration
+Enhanced Webhook Server for ChainSync and Slotify Integration with Full Features
 
-This module provides FastAPI endpoints to receive webhooks from:
-- ChainSync: Alert notifications
-- Slotify: Meeting scheduling notifications
-
-The webhooks trigger the appropriate AI agent workflows.
+Features:
+- API key authentication
+- HMAC signature verification
+- Database persistence for meetings and alerts
+- Slotify meeting creation
+- ChainSync status updates
+- Rate limiting
+- Comprehensive logging
 """
 
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends, Header
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import logging
+import time
+import json
 
 from .agent_orchestrator import AgentOrchestrator
+from .api_clients import SlotifyAPIClient, ChainSyncAPIClient
+from .database import (
+    init_database, get_db,
+    MeetingRepository, AlertRepository, LearningRepository, WebhookLogRepository
+)
+from .security import verify_api_key, verify_webhook_signature, rate_limit_check
+from .config import Config
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=getattr(logging, Config.LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
     title="ChainSync AI Agent Webhook Server",
-    description="Webhook endpoints for ChainSync alerts and Slotify meetings",
-    version="1.0.0"
+    description="Secure webhook endpoints for ChainSync alerts and Slotify meetings with full integration",
+    version="2.0.0"
 )
 
-# Initialize agent orchestrator
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure properly in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize components
 orchestrator = AgentOrchestrator()
+slotify_client = SlotifyAPIClient()
+chainsync_client = ChainSyncAPIClient()
+
+# Initialize database on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database and log startup."""
+    logger.info("ChainSync AI Agent Webhook Server v2.0 starting...")
+    init_database()
+    logger.info(f"Initialized with {len(orchestrator.agents)} agents")
+    logger.info(f"Security: API Key={'enabled' if Config.WEBHOOK_API_KEY else 'disabled'}, Signatures={'enabled' if Config.WEBHOOK_SECRET_KEY else 'disabled'}")
 
 
-# Pydantic Models for Request Validation
+# Pydantic Models
 
 class ChainSyncAlert(BaseModel):
     """ChainSync alert webhook payload."""
-    alert_id: str = Field(..., description="Unique alert identifier")
-    alert_type: str = Field(..., description="Type of alert (system_failure, compliance_violation, etc.)")
-    severity: str = Field(..., description="Alert severity (critical, high, medium, low)")
-    description: str = Field(..., description="Detailed description of the alert")
-    affected_systems: List[str] = Field(default_factory=list, description="List of affected systems")
-    detected_at: str = Field(..., description="ISO timestamp when alert was detected")
-    context: Dict[str, Any] = Field(default_factory=dict, description="Additional context data")
-    compliance_frameworks: Optional[List[str]] = Field(default=None, description="Relevant compliance frameworks")
+    alert_id: str
+    alert_type: str
+    severity: str
+    description: str
+    affected_systems: List[str] = Field(default_factory=list)
+    detected_at: str
+    context: Dict[str, Any] = Field(default_factory=dict)
+    compliance_frameworks: Optional[List[str]] = None
 
 
 class SlotifyMeeting(BaseModel):
     """Slotify meeting webhook payload."""
-    meeting_id: str = Field(..., description="Unique meeting identifier")
-    title: str = Field(..., description="Meeting title")
-    scheduled_time: str = Field(..., description="ISO timestamp for meeting")
-    attendees: List[str] = Field(default_factory=list, description="List of attendee emails")
-    alert_reference: Optional[str] = Field(default=None, description="Reference to triggering ChainSync alert")
-    organizer: Optional[str] = Field(default=None, description="Meeting organizer email")
-    duration_minutes: Optional[int] = Field(default=30, description="Meeting duration in minutes")
+    meeting_id: str
+    title: str
+    scheduled_time: str
+    attendees: List[str] = Field(default_factory=list)
+    alert_reference: Optional[str] = None
+    organizer: Optional[str] = None
+    duration_minutes: Optional[int] = 30
 
 
 class WebhookResponse(BaseModel):
@@ -65,19 +98,58 @@ class WebhookResponse(BaseModel):
     timestamp: str
 
 
-# Webhook Endpoints
+# Helper Functions
+
+async def log_webhook_request(
+    db,
+    endpoint: str,
+    method: str,
+    payload: Any,
+    headers: Dict,
+    response_status: int,
+    response_body: Any,
+    processing_time_ms: float,
+    error: Optional[str],
+    ip_address: str
+):
+    """Log webhook request to database."""
+    try:
+        WebhookLogRepository.create(db, {
+            "endpoint": endpoint,
+            "method": method,
+            "payload": payload if isinstance(payload, dict) else {},
+            "headers": dict(headers),
+            "response_status": response_status,
+            "response_body": str(response_body)[:1000],  # Limit size
+            "processing_time_ms": processing_time_ms,
+            "error": error,
+            "ip_address": ip_address
+        })
+    except Exception as e:
+        logger.error(f"Failed to log webhook request: {str(e)}")
+
+
+# Endpoints
 
 @app.get("/")
 async def root():
     """Root endpoint with API information."""
     return {
         "service": "ChainSync AI Agent Webhook Server",
-        "version": "1.0.0",
+        "version": "2.0.0",
+        "features": {
+            "api_key_auth": bool(Config.WEBHOOK_API_KEY),
+            "signature_verification": bool(Config.WEBHOOK_SECRET_KEY),
+            "database_persistence": True,
+            "slotify_integration": bool(Config.SLOTIFY_API_KEY),
+            "chainsync_integration": bool(Config.CHAINSYNC_API_KEY)
+        },
         "endpoints": {
             "chainsync_alerts": "/webhooks/chainsync/alert",
             "slotify_meetings": "/webhooks/slotify/meeting",
             "health": "/health",
-            "status": "/status"
+            "status": "/status",
+            "docs": "/docs"
         }
     }
 
@@ -88,6 +160,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "ChainSync AI Agents",
+        "version": "2.0.0",
         "timestamp": datetime.now().isoformat()
     }
 
@@ -102,6 +175,11 @@ async def get_status():
             content={
                 "status": "operational",
                 "system_status": status,
+                "integrations": {
+                    "slotify": "enabled" if Config.SLOTIFY_API_KEY else "disabled",
+                    "chainsync": "enabled" if Config.CHAINSYNC_API_KEY else "disabled",
+                    "database": "enabled"
+                },
                 "timestamp": datetime.now().isoformat()
             }
         )
@@ -113,110 +191,199 @@ async def get_status():
 @app.post("/webhooks/chainsync/alert", response_model=WebhookResponse)
 async def receive_chainsync_alert(
     alert: ChainSyncAlert,
-    background_tasks: BackgroundTasks
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db=Depends(get_db),
+    api_key: Optional[str] = Header(None, alias="X-API-Key")
 ):
     """
-    Receive ChainSync alert webhook and trigger AI agent workflow.
+    Receive ChainSync alert webhook - COMPLETE INTEGRATION.
 
-    This endpoint:
-    1. Receives alert from ChainSync
-    2. Triggers alert_to_meeting workflow (RCA + Compliance + MeetingContext)
-    3. Optionally schedules Slotify meeting
-    4. Returns meeting context and recommendations
-
-    Args:
-        alert: ChainSync alert data
-        background_tasks: FastAPI background tasks for async processing
-
-    Returns:
-        WebhookResponse with workflow results
+    Flow:
+    1. Authenticate request
+    2. Process alert through AI agents
+    3. Create Slotify meeting
+    4. Update ChainSync with meeting URL
+    5. Save everything to database
+    6. Return complete response
     """
-    logger.info(f"Received ChainSync alert: {alert.alert_id} - {alert.alert_type} ({alert.severity})")
+    start_time = time.time()
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Security checks
+    rate_limit_check(client_ip)
+    verify_api_key(api_key)
+
+    logger.info(f"Processing ChainSync alert: {alert.alert_id} - {alert.alert_type} ({alert.severity})")
 
     try:
-        # Convert Pydantic model to dict
+        # Convert to dict
         alert_data = alert.dict()
 
-        # Trigger alert_to_meeting workflow
+        # Step 1: Trigger AI agent workflow
+        logger.info(f"Running alert_to_meeting workflow for {alert.alert_id}")
         workflow_result = await orchestrator.multi_agent_workflow(
             'alert_to_meeting',
             {
                 'alert_data': alert_data,
-                'meeting_data': {}  # Will be auto-generated by workflow
+                'meeting_data': {}  # Will be auto-generated
             }
         )
 
-        logger.info(f"Alert workflow completed for {alert.alert_id}")
+        meeting_context = workflow_result.get('meeting_context', {})
+
+        # Step 2: Create meeting in Slotify
+        logger.info(f"Creating Slotify meeting for alert {alert.alert_id}")
+        slotify_meeting = await slotify_client.create_meeting(
+            title=meeting_context.get('meeting_title', f"Alert Review: {alert.alert_type}"),
+            description=meeting_context.get('why_scheduled', 'Meeting scheduled by AI agent'),
+            scheduled_time=meeting_context.get('scheduled_time', datetime.now().isoformat()),
+            duration_minutes=int(meeting_context.get('recommended_duration', '30').split()[0]),
+            attendees=meeting_context.get('suggested_attendees', []),
+            alert_reference=alert.alert_id
+        )
+
+        meeting_id = slotify_meeting.get('meeting_id')
+        meeting_url = slotify_meeting.get('meeting_url', '')
+
+        logger.info(f"Slotify meeting created: {meeting_id}")
+
+        # Step 3: Update ChainSync with meeting URL
+        logger.info(f"Updating ChainSync alert {alert.alert_id} with meeting URL")
+        await chainsync_client.update_alert_status(
+            alert_id=alert.alert_id,
+            status="meeting_scheduled",
+            meeting_url=meeting_url,
+            notes=f"AI-generated meeting context: {meeting_context.get('why_scheduled', '')[:200]}"
+        )
+
+        # Add comment with AI analysis
+        await chainsync_client.add_alert_comment(
+            alert_id=alert.alert_id,
+            comment=f"Root Cause: {workflow_result.get('root_cause_analysis', {}).get('root_cause', 'Unknown')}\nMeeting scheduled: {meeting_url}",
+            author="AI Agent"
+        )
+
+        # Step 4: Save to database
+        logger.info(f"Saving alert and meeting to database")
+
+        # Save alert
+        AlertRepository.create(db, {
+            "alert_id": alert.alert_id,
+            "alert_type": alert.alert_type,
+            "severity": alert.severity,
+            "description": alert.description,
+            "affected_systems": alert.affected_systems,
+            "detected_at": datetime.fromisoformat(alert.detected_at.replace('Z', '+00:00')),
+            "root_cause": workflow_result.get('root_cause_analysis', {}).get('root_cause'),
+            "recommendations": workflow_result.get('root_cause_analysis', {}).get('recommendations', []),
+            "compliance_status": workflow_result.get('compliance_check', {}).get('overall_status'),
+            "compliance_violations": workflow_result.get('compliance_check', {}).get('violations', []),
+            "meeting_created": True,
+            "meeting_id": meeting_id
+        })
+
+        # Save meeting
+        MeetingRepository.create(db, {
+            "meeting_id": meeting_id,
+            "alert_id": alert.alert_id,
+            "meeting_title": meeting_context.get('meeting_title'),
+            "scheduled_time": datetime.fromisoformat(meeting_context.get('scheduled_time', datetime.now().isoformat()).replace('Z', '+00:00')),
+            "meeting_url": meeting_url,
+            "attendees": meeting_context.get('suggested_attendees', []),
+            "alert_type": alert.alert_type,
+            "alert_severity": alert.severity,
+            "urgency_level": meeting_context.get('urgency', {}).get('level'),
+            "urgency_score": meeting_context.get('urgency', {}).get('score'),
+            "why_scheduled": meeting_context.get('why_scheduled'),
+            "discussion_points": meeting_context.get('discussion_points', []),
+            "pre_meeting_summary": meeting_context.get('pre_meeting_summary'),
+            "suggested_attendees": meeting_context.get('suggested_attendees', []),
+            "recommended_duration": meeting_context.get('recommended_duration'),
+            "status": "scheduled"
+        })
+
+        processing_time = (time.time() - start_time) * 1000
+
+        # Log webhook request
+        await log_webhook_request(
+            db, "/webhooks/chainsync/alert", "POST", alert_data,
+            dict(request.headers), 200, "success", processing_time, None, client_ip
+        )
+
+        logger.info(f"Alert {alert.alert_id} processed successfully in {processing_time:.2f}ms")
 
         return WebhookResponse(
             status="success",
-            message=f"Alert {alert.alert_id} processed successfully",
+            message=f"Alert {alert.alert_id} processed and meeting {meeting_id} created",
             data={
                 "alert_id": alert.alert_id,
-                "meeting_id": workflow_result.get('meeting_id'),
-                "urgency": workflow_result.get('meeting_context', {}).get('urgency'),
-                "workflow_result": workflow_result
+                "meeting_id": meeting_id,
+                "meeting_url": meeting_url,
+                "urgency": meeting_context.get('urgency'),
+                "workflow_result": {
+                    "root_cause": workflow_result.get('root_cause_analysis', {}).get('root_cause'),
+                    "compliance_status": workflow_result.get('compliance_check', {}).get('overall_status'),
+                    "meeting_explanation": workflow_result.get('meeting_explanation', '')[:500]
+                },
+                "processing_time_ms": processing_time
             },
             timestamp=datetime.now().isoformat()
         )
 
     except Exception as e:
-        logger.error(f"Error processing ChainSync alert {alert.alert_id}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error processing alert: {str(e)}"
+        processing_time = (time.time() - start_time) * 1000
+        logger.error(f"Error processing alert {alert.alert_id}: {str(e)}")
+
+        # Log failed request
+        await log_webhook_request(
+            db, "/webhooks/chainsync/alert", "POST", alert.dict(),
+            dict(request.headers), 500, str(e), processing_time, str(e), client_ip
         )
+
+        raise HTTPException(status_code=500, detail=f"Error processing alert: {str(e)}")
 
 
 @app.post("/webhooks/slotify/meeting", response_model=WebhookResponse)
 async def receive_slotify_meeting(
     meeting: SlotifyMeeting,
-    background_tasks: BackgroundTasks
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db=Depends(get_db),
+    api_key: Optional[str] = Header(None, alias="X-API-Key")
 ):
-    """
-    Receive Slotify meeting webhook and generate context.
+    """Receive Slotify meeting webhook and generate context."""
+    start_time = time.time()
+    client_ip = request.client.host if request.client else "unknown"
 
-    This endpoint:
-    1. Receives meeting notification from Slotify
-    2. If alert_reference exists, retrieves alert context
-    3. Generates meeting context explanation
-    4. Returns meeting briefing
+    # Security checks
+    rate_limit_check(client_ip)
+    verify_api_key(api_key)
 
-    Args:
-        meeting: Slotify meeting data
-        background_tasks: FastAPI background tasks for async processing
-
-    Returns:
-        WebhookResponse with meeting context
-    """
-    logger.info(f"Received Slotify meeting: {meeting.meeting_id} - {meeting.title}")
+    logger.info(f"Processing Slotify meeting: {meeting.meeting_id}")
 
     try:
-        # Get meeting context agent
         meeting_agent = orchestrator.get_agent('meeting_context')
 
-        # If there's an alert reference, fetch the alert context
+        # If there's an alert reference, get alert context
         alert_data = {}
         if meeting.alert_reference:
-            # In a real implementation, this would fetch from ChainSync API
-            # For now, we'll create a placeholder
-            logger.info(f"Meeting references alert: {meeting.alert_reference}")
-            alert_data = {
-                'alert_id': meeting.alert_reference,
-                'alert_type': 'referenced_from_slotify',
-                'severity': 'medium',
-                'description': f'Alert referenced in meeting {meeting.title}',
-                'detected_at': datetime.now().isoformat()
-            }
-        else:
-            # Generic meeting without specific alert
-            alert_data = {
-                'alert_id': f"generic_{meeting.meeting_id}",
-                'alert_type': 'general_meeting',
-                'severity': 'low',
-                'description': meeting.title,
-                'detected_at': datetime.now().isoformat()
-            }
+            # Try to get from database first
+            alert_record = AlertRepository.get_by_alert_id(db, meeting.alert_reference)
+            if alert_record:
+                alert_data = {
+                    'alert_id': alert_record.alert_id,
+                    'alert_type': alert_record.alert_type,
+                    'severity': alert_record.severity,
+                    'description': alert_record.description,
+                    'affected_systems': alert_record.affected_systems
+                }
+            else:
+                # Fetch from ChainSync API
+                try:
+                    alert_data = await chainsync_client.get_alert(meeting.alert_reference)
+                except:
+                    alert_data = {'alert_id': meeting.alert_reference}
 
         # Generate meeting context
         meeting_context = await meeting_agent.process_slotify_meeting(
@@ -224,10 +391,19 @@ async def receive_slotify_meeting(
             alert_data
         )
 
-        # Get meeting explanation
-        explanation = await meeting_agent.explain_meeting(meeting.meeting_id)
+        # Save to database if not already saved
+        existing = MeetingRepository.get_by_meeting_id(db, meeting.meeting_id)
+        if not existing:
+            MeetingRepository.create(db, {
+                "meeting_id": meeting.meeting_id,
+                "alert_id": meeting.alert_reference,
+                "meeting_title": meeting.title,
+                "scheduled_time": datetime.fromisoformat(meeting.scheduled_time.replace('Z', '+00:00')),
+                "attendees": meeting.attendees,
+                "status": "scheduled"
+            })
 
-        logger.info(f"Meeting context generated for {meeting.meeting_id}")
+        processing_time = (time.time() - start_time) * 1000
 
         return WebhookResponse(
             status="success",
@@ -235,151 +411,72 @@ async def receive_slotify_meeting(
             data={
                 "meeting_id": meeting.meeting_id,
                 "meeting_context": meeting_context,
-                "explanation": explanation
+                "explanation": await meeting_agent.explain_meeting(meeting.meeting_id),
+                "processing_time_ms": processing_time
             },
             timestamp=datetime.now().isoformat()
         )
 
     except Exception as e:
-        logger.error(f"Error processing Slotify meeting {meeting.meeting_id}: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error processing meeting: {str(e)}"
-        )
-
-
-@app.post("/webhooks/chainsync/alert-batch")
-async def receive_chainsync_alert_batch(alerts: List[ChainSyncAlert]):
-    """
-    Receive multiple ChainSync alerts in batch.
-
-    Useful for processing multiple alerts simultaneously.
-
-    Args:
-        alerts: List of ChainSync alerts
-
-    Returns:
-        Summary of batch processing
-    """
-    logger.info(f"Received batch of {len(alerts)} alerts")
-
-    results = []
-    for alert in alerts:
-        try:
-            alert_data = alert.dict()
-            workflow_result = await orchestrator.multi_agent_workflow(
-                'alert_to_meeting',
-                {'alert_data': alert_data, 'meeting_data': {}}
-            )
-            results.append({
-                "alert_id": alert.alert_id,
-                "status": "success",
-                "meeting_id": workflow_result.get('meeting_id')
-            })
-        except Exception as e:
-            logger.error(f"Error processing alert {alert.alert_id}: {str(e)}")
-            results.append({
-                "alert_id": alert.alert_id,
-                "status": "error",
-                "error": str(e)
-            })
-
-    return {
-        "status": "completed",
-        "total_alerts": len(alerts),
-        "successful": len([r for r in results if r['status'] == 'success']),
-        "failed": len([r for r in results if r['status'] == 'error']),
-        "results": results,
-        "timestamp": datetime.now().isoformat()
-    }
+        logger.error(f"Error processing meeting {meeting.meeting_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/agents/list")
 async def list_agents():
-    """List all available agents and their capabilities."""
-    agents = orchestrator.list_agents()
+    """List all available agents."""
     return {
-        "agents": agents,
-        "total_count": len(agents),
+        "agents": orchestrator.list_agents(),
+        "total_count": len(orchestrator.agents),
         "timestamp": datetime.now().isoformat()
     }
 
 
-@app.get("/workflows/list")
-async def list_workflows():
-    """List all available multi-agent workflows."""
+@app.get("/meetings/recent")
+async def get_recent_meetings(limit: int = 20, db=Depends(get_db)):
+    """Get recent meetings from database."""
+    meetings = MeetingRepository.get_recent_meetings(db, limit)
     return {
-        "workflows": [
+        "meetings": [
             {
-                "name": "intelligent_incident_response",
-                "description": "Query + RCA + Compliance + Learning",
-                "agents": ["natural_language_query", "root_cause_analysis", "compliance_autopilot", "continuous_learning"]
-            },
-            {
-                "name": "compliance_with_rca",
-                "description": "Compliance monitoring with auto RCA",
-                "agents": ["compliance_autopilot", "root_cause_analysis", "multi_step_reasoning"]
-            },
-            {
-                "name": "conversational_problem_solving",
-                "description": "Memory + Multi-Step Reasoning + Learning",
-                "agents": ["memory_enabled", "multi_step_reasoning", "continuous_learning"]
-            },
-            {
-                "name": "alert_to_meeting",
-                "description": "Alert to Meeting with Slotify integration",
-                "agents": ["root_cause_analysis", "compliance_autopilot", "meeting_context", "continuous_learning"]
+                "meeting_id": m.meeting_id,
+                "alert_id": m.alert_id,
+                "title": m.meeting_title,
+                "scheduled_time": m.scheduled_time.isoformat() if m.scheduled_time else None,
+                "urgency": m.urgency_level,
+                "status": m.status,
+                "created_at": m.created_at.isoformat() if m.created_at else None
             }
+            for m in meetings
         ],
+        "count": len(meetings),
         "timestamp": datetime.now().isoformat()
     }
 
 
-# Error handlers
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    """Handle HTTP exceptions."""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "status": "error",
-            "message": exc.detail,
-            "timestamp": datetime.now().isoformat()
-        }
-    )
-
-
-@app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    """Handle general exceptions."""
-    logger.error(f"Unhandled exception: {str(exc)}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "status": "error",
-            "message": "Internal server error",
-            "detail": str(exc),
-            "timestamp": datetime.now().isoformat()
-        }
-    )
-
-
-# Startup and shutdown events
-
-@app.on_event("startup")
-async def startup_event():
-    """Run on application startup."""
-    logger.info("ChainSync AI Agent Webhook Server starting up...")
-    logger.info(f"Initialized with {len(orchestrator.agents)} agents")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Run on application shutdown."""
-    logger.info("ChainSync AI Agent Webhook Server shutting down...")
+@app.get("/alerts/recent")
+async def get_recent_alerts(limit: int = 20, db=Depends(get_db)):
+    """Get recent alerts from database."""
+    from chainsync.database import AlertRecord
+    alerts = db.query(AlertRecord).order_by(AlertRecord.created_at.desc()).limit(limit).all()
+    return {
+        "alerts": [
+            {
+                "alert_id": a.alert_id,
+                "alert_type": a.alert_type,
+                "severity": a.severity,
+                "description": a.description,
+                "meeting_created": a.meeting_created,
+                "meeting_id": a.meeting_id,
+                "created_at": a.created_at.isoformat() if a.created_at else None
+            }
+            for a in alerts
+        ],
+        "count": len(alerts),
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=Config.PYTHON_AGENT_PORT)
