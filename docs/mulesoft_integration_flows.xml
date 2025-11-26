@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+MuleSoft Integration Flows for ChainSync AI Agents
+
+These flows demonstrate how to integrate ChainSync alerts with the AI Agent webhook server.
+
+Flows included:
+1. alert-to-webhook: Send ChainSync alerts to AI agents
+2. webhook-response-handler: Handle responses from AI agents
+3. slotify-meeting-notifier: Send meeting notifications to AI agents
+4. error-handler: Handle failed webhook calls with retry logic
+-->
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- Configuration -->
+    <configuration-properties file="config.yaml" doc:name="Configuration properties"/>
+
+    <!-- HTTP Request Configuration for AI Agent Webhook Server -->
+    <http:request-config name="AI_Agent_Webhook_Config" doc:name="HTTP Request configuration">
+        <http:request-connection host="${ai.agent.host}" port="${ai.agent.port}" protocol="HTTP"/>
+    </http:request-config>
+
+    <!-- Flow 1: Send ChainSync Alert to AI Agents -->
+    <flow name="alert-to-webhook-flow" doc:name="alert-to-webhook-flow">
+        <doc:description>
+            Triggered when a ChainSync alert is generated.
+            Sends alert to AI Agent webhook server for processing.
+        </doc:description>
+
+        <!-- Trigger: Listen for ChainSync alerts (could be from queue, DB, or HTTP listener) -->
+        <scheduler doc:name="Scheduler">
+            <scheduling-strategy>
+                <fixed-frequency frequency="10000"/>
+            </scheduling-strategy>
+        </scheduler>
+
+        <!-- Or use HTTP Listener for real-time alerts -->
+        <!-- <http:listener path="/chainsync/alert" config-ref="HTTP_Listener_config"/> -->
+
+        <!-- Transform ChainSync alert to webhook payload format -->
+        <ee:transform doc:name="Transform to AI Agent Webhook Format">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    alert_id: payload.id,
+    alert_type: payload.type,
+    severity: payload.severity,
+    description: payload.description,
+    affected_systems: payload.affectedSystems default [],
+    detected_at: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss'Z'"},
+    context: {
+        facility_id: payload.facilityId,
+        metric_values: payload.metricValues,
+        threshold_exceeded: payload.thresholdExceeded
+    },
+    compliance_frameworks: payload.complianceFrameworks default ["SOC2", "GDPR"]
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <!-- Generate HMAC signature for webhook security -->
+        <ee:transform doc:name="Add Security Headers">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="timestamp"><![CDATA[%dw 2.0
+output text/plain
+---
+floor(now().epochSeconds)]]></ee:set-variable>
+                <ee:set-variable variableName="payload_string"><![CDATA[%dw 2.0
+output application/json
+---
+write(payload, "application/json")]]></ee:set-variable>
+                <ee:set-variable variableName="signature"><![CDATA[%dw 2.0
+import * from dw::Crypto
+output text/plain
+---
+// HMAC-SHA256 signature: hmac(timestamp + "." + payload, secret_key)
+HMac(vars.timestamp ++ "." ++ vars.payload_string, "${webhook.secret.key}", "HmacSHA256")]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- Send to AI Agent Webhook -->
+        <http:request method="POST" doc:name="Send to AI Agent Webhook"
+                      config-ref="AI_Agent_Webhook_Config"
+                      path="/webhooks/chainsync/alert">
+            <http:headers><![CDATA[#[output application/java
+---
+{
+    "Content-Type": "application/json",
+    "X-API-Key": "${webhook.api.key}",
+    "X-Webhook-Signature": vars.signature,
+    "X-Webhook-Timestamp": vars.timestamp
+}]]]></http:headers>
+            <http:response-validator>
+                <http:success-status-code-validator values="200..299"/>
+            </http:response-validator>
+        </http:request>
+
+        <!-- Process webhook response -->
+        <ee:transform doc:name="Extract Meeting Details">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    alert_id: payload.data.alert_id,
+    meeting_id: payload.data.meeting_id,
+    meeting_url: payload.data.meeting_url,
+    urgency: payload.data.urgency,
+    status: payload.status,
+    message: payload.message
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <!-- Update ChainSync alert with meeting information -->
+        <flow-ref doc:name="Update ChainSync Alert" name="update-chainsync-alert-flow"/>
+
+        <!-- Log success -->
+        <logger level="INFO" doc:name="Log Success"
+                message="Alert #[payload.alert_id] processed. Meeting created: #[payload.meeting_url]"/>
+
+        <!-- Error handler -->
+        <error-handler>
+            <on-error-propagate enableNotifications="true" logException="true"
+                                doc:name="On Error Propagate" type="ANY">
+                <logger level="ERROR" doc:name="Log Error"
+                        message="Failed to send alert to AI agents: #[error.description]"/>
+                <flow-ref doc:name="Retry Logic" name="webhook-retry-flow"/>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+    <!-- Flow 2: Update ChainSync Alert with Meeting Info -->
+    <sub-flow name="update-chainsync-alert-flow" doc:name="update-chainsync-alert-flow">
+        <http:request method="PATCH" doc:name="Update ChainSync Alert"
+                      path="/api/alerts/{alertId}"
+                      config-ref="ChainSync_API_Config">
+            <http:uri-params><![CDATA[#[output application/java
+---
+{
+    "alertId": payload.alert_id
+}]]]></http:uri-params>
+            <http:body><![CDATA[#[output application/json
+---
+{
+    status: "meeting_scheduled",
+    meeting_url: payload.meeting_url,
+    meeting_id: payload.meeting_id,
+    ai_processed: true,
+    updated_at: now()
+}]]]></http:body>
+            <http:headers><![CDATA[#[output application/java
+---
+{
+    "X-API-Key": "${chainsync.api.key}"
+}]]]></http:headers>
+        </http:request>
+    </sub-flow>
+
+    <!-- Flow 3: Send Slotify Meeting Notification to AI Agents -->
+    <flow name="slotify-meeting-to-webhook-flow" doc:name="slotify-meeting-to-webhook-flow">
+        <doc:description>
+            When a meeting is scheduled in Slotify, send notification to AI agents
+            to generate meeting context and briefing materials.
+        </description>
+
+        <!-- Trigger from Slotify webhook or event -->
+        <http:listener path="/slotify/meeting-created" config-ref="HTTP_Listener_config"
+                       doc:name="Slotify Meeting Created"/>
+
+        <!-- Transform Slotify meeting to webhook payload -->
+        <ee:transform doc:name="Transform to AI Agent Format">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    meeting_id: payload.meeting.id,
+    title: payload.meeting.title,
+    scheduled_time: payload.meeting.start_time,
+    attendees: payload.meeting.attendees map $.email,
+    alert_reference: payload.meeting.metadata.alert_id,
+    organizer: payload.meeting.organizer.email,
+    duration_minutes: payload.meeting.duration
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <!-- Send to AI Agent Webhook -->
+        <http:request method="POST" doc:name="Send to AI Agent"
+                      config-ref="AI_Agent_Webhook_Config"
+                      path="/webhooks/slotify/meeting">
+            <http:headers><![CDATA[#[output application/java
+---
+{
+    "Content-Type": "application/json",
+    "X-API-Key": "${webhook.api.key}"
+}]]]></http:headers>
+        </http:request>
+
+        <!-- Extract and use meeting context generated by AI -->
+        <ee:transform doc:name="Extract Meeting Context">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    meeting_id: payload.data.meeting_id,
+    context_generated: true,
+    explanation: payload.data.explanation,
+    meeting_context: payload.data.meeting_context
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <!-- Optionally: Send context back to Slotify or email attendees -->
+        <logger level="INFO" doc:name="Log Success"
+                message="Meeting context generated for #[payload.meeting_id]"/>
+    </flow>
+
+    <!-- Flow 4: Webhook Retry Logic -->
+    <sub-flow name="webhook-retry-flow" doc:name="webhook-retry-flow">
+        <doc:description>
+            Retry failed webhook calls with exponential backoff.
+        </doc:description>
+
+        <try doc:name="Try with Retry">
+            <until-successful maxRetries="3" millisBetweenRetries="5000" doc:name="Until Successful">
+                <flow-ref doc:name="Retry Alert Send" name="alert-to-webhook-flow"/>
+            </until-successful>
+            <error-handler>
+                <on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue">
+                    <!-- Send to dead letter queue or alert admin -->
+                    <logger level="ERROR" doc:name="Final Failure"
+                            message="Failed to send alert after retries. Manual intervention required."/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <!-- Flow 5: Batch Alert Processing -->
+    <flow name="batch-alert-processing-flow" doc:name="batch-alert-processing-flow">
+        <doc:description>
+            Process multiple alerts in batch for efficiency.
+        </description>
+
+        <scheduler doc:name="Hourly Batch">
+            <scheduling-strategy>
+                <cron expression="0 0 * * * ?"/>
+            </scheduling-strategy>
+        </scheduler>
+
+        <!-- Get pending alerts from ChainSync -->
+        <http:request method="GET" doc:name="Get Pending Alerts"
+                      config-ref="ChainSync_API_Config"
+                      path="/api/alerts/pending"/>
+
+        <!-- Split into individual alerts -->
+        <foreach doc:name="For Each Alert" collection="#[payload.alerts]">
+            <flow-ref doc:name="Process Alert" name="alert-to-webhook-flow"/>
+        </foreach>
+
+        <logger level="INFO" doc:name="Log Batch Complete"
+                message="Processed #[sizeOf(payload.alerts)] alerts in batch"/>
+    </flow>
+
+</mule>

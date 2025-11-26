@@ -1,0 +1,41 @@
+# MuleSoft Configuration for ChainSync AI Agent Integration
+
+# AI Agent Webhook Server
+ai:
+  agent:
+    host: "your-ai-agent-server.com"  # Or localhost for development
+    port: 8000
+    protocol: "HTTPS"  # Use HTTPS in production
+
+# ChainSync API
+chainsync:
+  api:
+    url: "http://localhost:8081/api"
+    key: "${secure::chainsync.api.key}"
+
+# Slotify API
+slotify:
+  api:
+    url: "https://api.slotify.com/v1"
+    key: "${secure::slotify.api.key}"
+
+# Webhook Security
+webhook:
+  api:
+    key: "${secure::webhook.api.key}"
+  secret:
+    key: "${secure::webhook.secret.key}"
+
+# Retry Configuration
+retry:
+  max:
+    attempts: 3
+  delay:
+    milliseconds: 5000
+  backoff:
+    multiplier: 2
+
+# Logging
+logging:
+  level: "INFO"
+  pattern: "[%d{yyyy-MM-dd HH:mm:ss}] %-5level %logger{36} - %msg%n"
