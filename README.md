@@ -210,6 +210,204 @@ This will demonstrate:
 - Parallel agent execution
 - System status and capabilities
 
+### 4. Start Webhook Server (For ChainSync & Slotify Integration)
+```bash
+# Start webhook server on default port 8000
+python main.py --webhook
+
+# Start on custom port
+python main.py --webhook --port 8080
+```
+
+The webhook server provides real-time integration with:
+- **ChainSync** - Receives alert notifications
+- **Slotify** - Receives meeting scheduling notifications
+
+## 🔗 Webhook Integration
+
+### Overview
+
+The webhook server enables real-time integration between ChainSync alerts and Slotify meetings through AI-powered automation.
+
+**Flow:**
+```
+ChainSync Alert → Webhook → AI Agents → Meeting Context → Slotify
+```
+
+### Webhook Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/webhooks/chainsync/alert` | POST | Receive ChainSync alerts |
+| `/webhooks/slotify/meeting` | POST | Receive Slotify meeting notifications |
+| `/webhooks/chainsync/alert-batch` | POST | Batch process multiple alerts |
+| `/health` | GET | Health check |
+| `/status` | GET | System status |
+| `/agents/list` | GET | List all agents |
+| `/workflows/list` | GET | List all workflows |
+
+### ChainSync Alert Webhook
+
+**Endpoint:** `POST /webhooks/chainsync/alert`
+
+**Payload Example:**
+```json
+{
+  "alert_id": "chainsync-alert-12345",
+  "alert_type": "system_failure",
+  "severity": "critical",
+  "description": "Database connection pool exhausted",
+  "affected_systems": ["API Gateway", "User Service", "Database"],
+  "detected_at": "2025-11-26T10:30:00Z",
+  "context": {
+    "connection_count": 100,
+    "max_connections": 100,
+    "error_rate": 0.45
+  },
+  "compliance_frameworks": ["SOC2", "ISO27001"]
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "Alert chainsync-alert-12345 processed successfully",
+  "data": {
+    "alert_id": "chainsync-alert-12345",
+    "meeting_id": "slotify_meeting_1732617000.123",
+    "urgency": {
+      "level": "CRITICAL",
+      "score": 1.0,
+      "recommended_response_time": "< 1 hour"
+    },
+    "workflow_result": {
+      "root_cause_analysis": {...},
+      "compliance_check": {...},
+      "meeting_context": {...}
+    }
+  },
+  "timestamp": "2025-11-26T10:30:15Z"
+}
+```
+
+**What Happens:**
+1. Alert is received and validated
+2. RCA Agent analyzes root cause
+3. Compliance Agent checks for violations
+4. Meeting Context Agent generates meeting briefing
+5. Learning Agent records pattern
+6. Returns meeting context with explanation
+
+### Slotify Meeting Webhook
+
+**Endpoint:** `POST /webhooks/slotify/meeting`
+
+**Payload Example:**
+```json
+{
+  "meeting_id": "slotify-meeting-789",
+  "title": "Critical System Review",
+  "scheduled_time": "2025-11-26T15:00:00Z",
+  "attendees": [
+    "devops@company.com",
+    "sre@company.com",
+    "cto@company.com"
+  ],
+  "alert_reference": "chainsync-alert-12345",
+  "organizer": "slotify@company.com",
+  "duration_minutes": 60
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "Meeting slotify-meeting-789 context generated",
+  "data": {
+    "meeting_id": "slotify-meeting-789",
+    "meeting_context": {
+      "why_scheduled": "This meeting was scheduled because...",
+      "discussion_points": [
+        "1. Review database connection pool configuration",
+        "2. Implement connection pooling best practices",
+        "3. Set up monitoring for connection exhaustion"
+      ],
+      "urgency": "CRITICAL",
+      "recommended_duration": "60 minutes"
+    },
+    "explanation": "📅 Meeting: Critical System Review\n..."
+  },
+  "timestamp": "2025-11-26T10:31:00Z"
+}
+```
+
+### Setting Up Webhooks
+
+#### In ChainSync (MuleSoft)
+
+Configure ChainSync to send alerts to your webhook endpoint:
+
+```xml
+<!-- MuleSoft Flow Example -->
+<flow name="send-alert-to-ai-agents">
+  <http:request method="POST"
+                url="http://your-server:8000/webhooks/chainsync/alert">
+    <http:body><![CDATA[#[payload]]]></http:body>
+    <http:headers>
+      <http:header key="Content-Type" value="application/json"/>
+    </http:headers>
+  </http:request>
+</flow>
+```
+
+#### In Slotify
+
+Configure Slotify webhook URL in settings:
+```
+Webhook URL: http://your-server:8000/webhooks/slotify/meeting
+Method: POST
+Content-Type: application/json
+```
+
+### Testing Webhooks
+
+#### Test ChainSync Alert
+```bash
+curl -X POST http://localhost:8000/webhooks/chainsync/alert \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alert_id": "test-alert-001",
+    "alert_type": "system_failure",
+    "severity": "high",
+    "description": "Test alert for webhook integration",
+    "affected_systems": ["Test Service"],
+    "detected_at": "2025-11-26T10:00:00Z",
+    "context": {}
+  }'
+```
+
+#### Test Slotify Meeting
+```bash
+curl -X POST http://localhost:8000/webhooks/slotify/meeting \
+  -H "Content-Type: application/json" \
+  -d '{
+    "meeting_id": "test-meeting-001",
+    "title": "Test Meeting",
+    "scheduled_time": "2025-11-26T15:00:00Z",
+    "attendees": ["test@company.com"],
+    "alert_reference": "test-alert-001"
+  }'
+```
+
+### API Documentation
+
+Once the webhook server is running, access interactive API documentation:
+
+- **Swagger UI:** `http://localhost:8000/docs`
+- **ReDoc:** `http://localhost:8000/redoc`
+
 ## 💻 Usage Examples
 
 ### Using Individual Agents
