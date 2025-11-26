@@ -8,6 +8,12 @@ Demonstrates all specialized AI agents:
 - Compliance Autopilot Agent
 - Memory-Enabled Agent
 - Multi-Step Reasoning Agent
+- Meeting Context Agent (Slotify Integration)
+
+Usage:
+  python main.py                  # Run demo of all agents
+  python main.py --webhook        # Start webhook server for ChainSync/Slotify integration
+  python main.py --webhook --port 8000  # Start webhook server on custom port
 """
 import asyncio
 import logging
@@ -277,5 +283,49 @@ async def main():
         print("   Check logs for details")
 
 
+def start_webhook_server(port: int = 8000):
+    """
+    Start the webhook server for ChainSync and Slotify integration.
+
+    Args:
+        port: Port number to run the server on (default: 8000)
+    """
+    import uvicorn
+    from chainsync.webhook_server import app
+
+    print("╔" + "═"*68 + "╗")
+    print("║" + " "*15 + "ChainSync AI Agent Webhook Server" + " "*19 + "║")
+    print("╚" + "═"*68 + "╝")
+    print()
+    print(f"🚀 Starting webhook server on port {port}...")
+    print(f"📡 Webhook Endpoints:")
+    print(f"   • ChainSync Alerts: http://localhost:{port}/webhooks/chainsync/alert")
+    print(f"   • Slotify Meetings: http://localhost:{port}/webhooks/slotify/meeting")
+    print(f"   • Health Check:     http://localhost:{port}/health")
+    print(f"   • System Status:    http://localhost:{port}/status")
+    print(f"   • API Docs:         http://localhost:{port}/docs")
+    print()
+    print("💡 Press Ctrl+C to stop the server")
+    print("="*70)
+
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+
+    # Check for webhook flag
+    if "--webhook" in sys.argv:
+        # Get port from arguments if provided
+        port = 8000
+        if "--port" in sys.argv:
+            try:
+                port_index = sys.argv.index("--port") + 1
+                port = int(sys.argv[port_index])
+            except (IndexError, ValueError):
+                print("Invalid port number. Using default port 8000.")
+
+        start_webhook_server(port)
+    else:
+        # Run demo mode
+        asyncio.run(main())
