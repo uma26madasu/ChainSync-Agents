@@ -27,26 +27,35 @@ class BaseAgent:
         self.created_at = datetime.now()
 
     def _get_openai_client(self):
-        """Get OpenAI client instance."""
+        """Get OpenAI async client instance with timeout configuration."""
         try:
-            import openai
-            openai.api_key = self.config.get_openai_api_key()
-            return openai
+            from openai import AsyncOpenAI
+            return AsyncOpenAI(
+                api_key=Config.OPENAI_API_KEY,
+                timeout=30.0,  # 30 second timeout
+                max_retries=2  # Retry up to 2 times on failure
+            )
         except ImportError:
             raise ImportError("OpenAI package not installed. Run: pip install openai")
 
-    async def _call_openai(self, messages: List[Dict], model: str = "gpt-4", temperature: float = 0.7) -> str:
-        """Make async call to OpenAI API."""
+    async def _call_openai(self, messages: List[Dict], model: str = "gpt-4", temperature: float = 0.7, timeout: float = 30.0) -> str:
+        """Make async call to OpenAI API with timeout."""
         try:
             client = self._get_openai_client()
-            response = await asyncio.to_thread(
-                client.chat.completions.create,
-                model=model,
-                messages=messages,
-                temperature=temperature
+            response = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature
+                ),
+                timeout=timeout
             )
             return response.choices[0].message.content
+        except asyncio.TimeoutError:
+            self.log(f"OpenAI API call timed out after {timeout} seconds")
+            return f"Error: OpenAI API call timed out after {timeout} seconds"
         except Exception as e:
+            self.log(f"Error calling OpenAI: {str(e)}")
             return f"Error calling OpenAI: {str(e)}"
 
     def log(self, message: str):
@@ -303,7 +312,8 @@ class NaturalLanguageQueryAgent(BaseAgent):
 
         try:
             return json.loads(intent_str)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            self.log(f"Failed to parse intent JSON: {str(e)}")
             return {'intent': 'unknown', 'entities': [], 'query_type': 'general'}
 
     async def _convert_to_structured_query(self, nl_query: str, data_source: str) -> Dict:
@@ -317,7 +327,8 @@ class NaturalLanguageQueryAgent(BaseAgent):
 
         try:
             return json.loads(structured_str)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            self.log(f"Failed to parse structured query JSON: {str(e)}")
             return {'type': 'search', 'query': nl_query}
 
     async def _execute_query(self, structured_query: Dict, data_source: str) -> Any:

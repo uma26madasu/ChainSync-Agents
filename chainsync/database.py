@@ -7,7 +7,7 @@ This module provides:
 - CRUD operations for persistent storage
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, Boolean, JSON, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, scoped_session
 from datetime import datetime
@@ -25,17 +25,32 @@ SessionLocal = None
 
 
 def init_database():
-    """Initialize database connection and create tables."""
+    """Initialize database connection with connection pooling and create tables."""
     global engine, SessionLocal
 
     database_url = Config.DATABASE_URL
     logger.info(f"Initializing database: {database_url}")
 
-    # Create engine
+    # Connection pool configuration
+    pool_config = {}
+    if "sqlite" in database_url:
+        # SQLite doesn't support connection pooling
+        pool_config["connect_args"] = {"check_same_thread": False}
+    else:
+        # PostgreSQL/MySQL connection pool settings
+        pool_config.update({
+            "pool_size": 10,  # Number of connections to maintain
+            "max_overflow": 20,  # Additional connections allowed when pool is exhausted
+            "pool_timeout": 30,  # Seconds to wait for a connection
+            "pool_pre_ping": True,  # Verify connections before using them
+            "pool_recycle": 3600,  # Recycle connections after 1 hour
+        })
+
+    # Create engine with pooling
     engine = create_engine(
         database_url,
-        connect_args={"check_same_thread": False} if "sqlite" in database_url else {},
-        echo=Config.DEBUG
+        echo=Config.DEBUG,
+        **pool_config
     )
 
     # Create session factory
@@ -43,9 +58,9 @@ def init_database():
         sessionmaker(autocommit=False, autoflush=False, bind=engine)
     )
 
-    # Create all tables
+    # Create all tables (use Alembic migrations in production)
     Base.metadata.create_all(bind=engine)
-    logger.info("Database initialized successfully")
+    logger.info("Database initialized successfully with connection pooling")
 
 
 def get_db():
@@ -62,12 +77,16 @@ def get_db():
 class MeetingRecord(Base):
     """Database model for meeting history."""
     __tablename__ = "meetings"
+    __table_args__ = (
+        Index('ix_meetings_status_scheduled_time', 'status', 'scheduled_time'),
+        Index('ix_meetings_alert_type_severity', 'alert_type', 'alert_severity'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     meeting_id = Column(String(255), unique=True, index=True, nullable=False)
     alert_id = Column(String(255), index=True)
     meeting_title = Column(String(500))
-    scheduled_time = Column(DateTime)
+    scheduled_time = Column(DateTime, index=True)  # Added index for time-based queries
     meeting_url = Column(String(500))
     attendees = Column(JSON)  # List of email addresses
     alert_type = Column(String(100))
@@ -79,14 +98,18 @@ class MeetingRecord(Base):
     pre_meeting_summary = Column(Text)
     suggested_attendees = Column(JSON)  # List of suggested attendees
     recommended_duration = Column(String(50))
-    status = Column(String(50), default="scheduled")  # scheduled, completed, cancelled
-    created_at = Column(DateTime, default=datetime.now)
+    status = Column(String(50), default="scheduled", index=True)  # Added index for status filtering
+    created_at = Column(DateTime, default=datetime.now, index=True)  # Added index
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class AlertRecord(Base):
     """Database model for alert processing history."""
     __tablename__ = "alerts"
+    __table_args__ = (
+        Index('ix_alerts_type_severity', 'alert_type', 'severity'),
+        Index('ix_alerts_meeting_created_processed', 'meeting_created', 'processed_at'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     alert_id = Column(String(255), unique=True, index=True, nullable=False)
@@ -94,15 +117,15 @@ class AlertRecord(Base):
     severity = Column(String(50), index=True)
     description = Column(Text)
     affected_systems = Column(JSON)  # List of affected systems
-    detected_at = Column(DateTime)
+    detected_at = Column(DateTime, index=True)  # Added index for time-based queries
     root_cause = Column(Text)
     recommendations = Column(JSON)  # List of recommendations
-    compliance_status = Column(String(50))  # COMPLIANT, NON_COMPLIANT
+    compliance_status = Column(String(50), index=True)  # Added index for compliance filtering
     compliance_violations = Column(JSON)  # List of violations
-    meeting_created = Column(Boolean, default=False)
-    meeting_id = Column(String(255))
-    processed_at = Column(DateTime, default=datetime.now)
-    created_at = Column(DateTime, default=datetime.now)
+    meeting_created = Column(Boolean, default=False, index=True)  # Added index
+    meeting_id = Column(String(255), index=True)  # Added index for lookups
+    processed_at = Column(DateTime, default=datetime.now, index=True)  # Added index
+    created_at = Column(DateTime, default=datetime.now, index=True)  # Added index
 
 
 class LearningData(Base):

@@ -19,7 +19,6 @@ import asyncio
 import logging
 import json
 from chainsync.config import Config
-from chainsync.ai_agent import ChainSyncAIAgent
 from chainsync.agent_orchestrator import AgentOrchestrator
 
 # Configure logging
