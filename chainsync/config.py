@@ -30,15 +30,40 @@ class Config:
     # Database Configuration
     DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///./chainsync_agents.db')
 
+    # Redis Configuration (optional, for distributed rate limiting)
+    REDIS_URL = os.getenv('REDIS_URL')  # e.g., redis://localhost:6379/0
+
     # Development Settings
     DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 
+    # CORS Configuration
+    CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://localhost:8000').split(',')
+
     @classmethod
     def validate(cls):
-        """Validate required configuration"""
-        warnings = []
+        """
+        Validate required configuration.
 
+        Returns:
+            bool: False if critical configs are missing, True otherwise
+
+        Raises:
+            SystemExit: If running in production mode with critical configs missing
+        """
+        warnings = []
+        errors = []
+        is_production = not cls.DEBUG
+
+        # Critical for production
+        if is_production:
+            if not cls.OPENAI_API_KEY:
+                errors.append("OPENAI_API_KEY not set. Required for production.")
+
+            if not cls.WEBHOOK_API_KEY or not cls.WEBHOOK_SECRET_KEY:
+                errors.append("Webhook security not configured. Required for production.")
+
+        # Warnings (non-critical)
         if not cls.OPENAI_API_KEY:
             warnings.append("OPENAI_API_KEY not set. Using mock responses.")
 
@@ -49,11 +74,23 @@ class Config:
             warnings.append("CHAINSYNC_API_KEY not set. ChainSync API calls disabled.")
 
         if not cls.WEBHOOK_API_KEY or not cls.WEBHOOK_SECRET_KEY:
-            warnings.append("Webhook security not configured. Webhooks are unprotected.")
+            if not is_production:
+                warnings.append("Webhook security not configured. Webhooks are unprotected.")
 
+        # Print errors
+        if errors:
+            print("❌ Configuration Errors:")
+            for error in errors:
+                print(f"   - {error}")
+            print("\nFix these issues before running in production!")
+            if is_production:
+                import sys
+                sys.exit(1)
+
+        # Print warnings
         if warnings:
             print("⚠️  Configuration Warnings:")
             for warning in warnings:
                 print(f"   - {warning}")
 
-        return True
+        return len(errors) == 0

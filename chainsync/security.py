@@ -4,14 +4,15 @@ Security utilities for webhook authentication and authorization
 Provides:
 - API key authentication
 - HMAC signature verification
-- Rate limiting
+- Rate limiting (with optional Redis support for distributed deployments)
 - Security middleware for FastAPI
 """
 
 import hmac
 import hashlib
 import time
-from typing import Optional
+from typing import Optional, List
+from abc import ABC, abstractmethod
 from fastapi import HTTPException, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from .config import Config
@@ -19,8 +20,108 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Simple in-memory rate limiter
-rate_limit_store = {}
+
+class RateLimitStore(ABC):
+    """Abstract interface for rate limit storage."""
+
+    @abstractmethod
+    def add_request(self, client_ip: str, timestamp: float):
+        """Add a request timestamp for a client IP."""
+        pass
+
+    @abstractmethod
+    def get_requests(self, client_ip: str, window_seconds: int) -> List[float]:
+        """Get recent requests for a client IP within the time window."""
+        pass
+
+    @abstractmethod
+    def cleanup_old_entries(self, window_seconds: int):
+        """Clean up expired entries."""
+        pass
+
+
+class InMemoryRateLimitStore(RateLimitStore):
+    """In-memory rate limit storage (not suitable for multi-process deployments)."""
+
+    def __init__(self):
+        self.store = {}
+        logger.warning("Using in-memory rate limiting. Not suitable for distributed deployments. Consider using Redis.")
+
+    def add_request(self, client_ip: str, timestamp: float):
+        if client_ip not in self.store:
+            self.store[client_ip] = []
+        self.store[client_ip].append(timestamp)
+
+    def get_requests(self, client_ip: str, window_seconds: int) -> List[float]:
+        current_time = time.time()
+        if client_ip not in self.store:
+            return []
+        # Filter to only recent requests
+        recent = [ts for ts in self.store[client_ip] if current_time - ts < window_seconds]
+        self.store[client_ip] = recent
+        return recent
+
+    def cleanup_old_entries(self, window_seconds: int):
+        current_time = time.time()
+        for ip in list(self.store.keys()):
+            self.store[ip] = [ts for ts in self.store[ip] if current_time - ts < window_seconds]
+            if not self.store[ip]:
+                del self.store[ip]
+
+
+class RedisRateLimitStore(RateLimitStore):
+    """Redis-based rate limit storage (suitable for distributed deployments)."""
+
+    def __init__(self, redis_client):
+        self.redis = redis_client
+        logger.info("Using Redis for rate limiting (distributed deployment ready)")
+
+    def add_request(self, client_ip: str, timestamp: float):
+        key = f"rate_limit:{client_ip}"
+        self.redis.zadd(key, {str(timestamp): timestamp})
+
+    def get_requests(self, client_ip: str, window_seconds: int) -> List[float]:
+        key = f"rate_limit:{client_ip}"
+        current_time = time.time()
+        min_time = current_time - window_seconds
+
+        # Remove old entries
+        self.redis.zremrangebyscore(key, 0, min_time)
+
+        # Get recent requests
+        timestamps = self.redis.zrange(key, 0, -1)
+        return [float(ts) for ts in timestamps]
+
+    def cleanup_old_entries(self, window_seconds: int):
+        # Redis handles expiration, but we can set TTL on keys
+        # This is called periodically but Redis auto-expires
+        pass
+
+
+# Initialize rate limit store
+def _init_rate_limit_store() -> RateLimitStore:
+    """Initialize rate limit store (Redis if available, otherwise in-memory)."""
+    redis_url = Config.DATABASE_URL if hasattr(Config, 'REDIS_URL') else None
+
+    try:
+        import redis
+        redis_url = getattr(Config, 'REDIS_URL', None)
+        if redis_url:
+            redis_client = redis.from_url(redis_url, decode_responses=True)
+            # Test connection
+            redis_client.ping()
+            return RedisRateLimitStore(redis_client)
+    except (ImportError, Exception) as e:
+        if isinstance(e, ImportError):
+            logger.info("Redis not installed. Using in-memory rate limiting.")
+        else:
+            logger.warning(f"Failed to connect to Redis: {e}. Falling back to in-memory rate limiting.")
+
+    return InMemoryRateLimitStore()
+
+
+# Global rate limit store
+rate_limit_store = _init_rate_limit_store()
 
 
 def verify_api_key(api_key: Optional[str] = Header(None, alias="X-API-Key")) -> bool:
@@ -49,7 +150,7 @@ def verify_api_key(api_key: Optional[str] = Header(None, alias="X-API-Key")) -> 
         )
 
     if api_key != Config.WEBHOOK_API_KEY:
-        logger.warning(f"Invalid API key attempt: {api_key[:10]}...")
+        logger.warning("Invalid API key attempt detected")
         raise HTTPException(
             status_code=403,
             detail="Invalid API key"
@@ -132,7 +233,7 @@ def rate_limit_check(
     window_seconds: int = 60
 ) -> bool:
     """
-    Simple in-memory rate limiting.
+    Rate limiting with pluggable storage backend (in-memory or Redis).
 
     Args:
         client_ip: Client IP address
@@ -147,31 +248,27 @@ def rate_limit_check(
     """
     current_time = time.time()
 
-    # Clean up old entries
-    for ip in list(rate_limit_store.keys()):
-        rate_limit_store[ip] = [
-            timestamp for timestamp in rate_limit_store[ip]
-            if current_time - timestamp < window_seconds
-        ]
-        if not rate_limit_store[ip]:
-            del rate_limit_store[ip]
+    # Get recent requests for this client
+    request_times = rate_limit_store.get_requests(client_ip, window_seconds)
 
-    # Check rate limit
-    if client_ip not in rate_limit_store:
-        rate_limit_store[client_ip] = []
-
-    request_times = rate_limit_store[client_ip]
-
+    # Check if limit exceeded
     if len(request_times) >= max_requests:
-        retry_after = int(window_seconds - (current_time - request_times[0]))
+        oldest_request = min(request_times) if request_times else current_time
+        retry_after = int(window_seconds - (current_time - oldest_request))
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Try again in {retry_after} seconds.",
-            headers={"Retry-After": str(retry_after)}
+            headers={"Retry-After": str(max(1, retry_after))}
         )
 
     # Add current request
-    rate_limit_store[client_ip].append(current_time)
+    rate_limit_store.add_request(client_ip, current_time)
+
+    # Periodically cleanup (every ~100 requests)
+    import random
+    if random.randint(1, 100) == 1:
+        rate_limit_store.cleanup_old_entries(window_seconds)
+
     return True
 
 

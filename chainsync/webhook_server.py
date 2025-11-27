@@ -14,6 +14,7 @@ Features:
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends, Header
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -27,7 +28,7 @@ from .database import (
     init_database, get_db,
     MeetingRepository, AlertRepository, LearningRepository, WebhookLogRepository
 )
-from .security import verify_api_key, verify_webhook_signature, rate_limit_check
+from .security import verify_api_key, verify_webhook_signature, rate_limit_check, rate_limit_store
 from .config import Config
 
 # Configure logging
@@ -41,14 +42,34 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Add CORS middleware
+# Request body size limit middleware
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Middleware to limit request body size to prevent DoS attacks."""
+    def __init__(self, app, max_size: int = 1_000_000):  # 1MB default
+        super().__init__(app)
+        self.max_size = max_size
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in ["POST", "PUT", "PATCH"]:
+            content_length = request.headers.get("content-length")
+            if content_length and int(content_length) > self.max_size:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": f"Request body too large. Maximum size is {self.max_size} bytes."}
+                )
+        return await call_next(request)
+
+# Add CORS middleware with secure configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure properly in production
+    allow_origins=Config.CORS_ORIGINS,  # Configured via CORS_ORIGINS environment variable
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Webhook-Signature"],
 )
+
+# Add request size limit middleware (1MB limit)
+app.add_middleware(RequestSizeLimitMiddleware, max_size=1_000_000)
 
 # Initialize components
 orchestrator = AgentOrchestrator()
@@ -155,14 +176,66 @@ async def root():
 
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {
+async def health_check(db = Depends(get_db)):
+    """
+    Comprehensive health check endpoint that verifies:
+    - Database connectivity
+    - Configuration
+    - External service availability (optional)
+    """
+    health_status = {
         "status": "healthy",
         "service": "ChainSync AI Agents",
         "version": "2.0.0",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "checks": {}
     }
+
+    all_healthy = True
+
+    # Check database connectivity
+    try:
+        # Execute a simple query to verify database connection
+        db.execute("SELECT 1")
+        health_status["checks"]["database"] = {
+            "status": "healthy",
+            "message": "Database connection successful"
+        }
+    except Exception as e:
+        health_status["checks"]["database"] = {
+            "status": "unhealthy",
+            "message": f"Database connection failed: {str(e)}"
+        }
+        all_healthy = False
+
+    # Check configuration
+    health_status["checks"]["configuration"] = {
+        "status": "healthy" if Config.validate() else "degraded",
+        "openai_configured": bool(Config.OPENAI_API_KEY),
+        "webhook_security": bool(Config.WEBHOOK_API_KEY and Config.WEBHOOK_SECRET_KEY),
+        "slotify_configured": bool(Config.SLOTIFY_API_KEY),
+        "chainsync_configured": bool(Config.CHAINSYNC_API_KEY)
+    }
+
+    # Check rate limiter
+    try:
+        health_status["checks"]["rate_limiter"] = {
+            "status": "healthy",
+            "type": rate_limit_store.__class__.__name__
+        }
+    except Exception as e:
+        health_status["checks"]["rate_limiter"] = {
+            "status": "unhealthy",
+            "message": str(e)
+        }
+        all_healthy = False
+
+    # Overall status
+    health_status["status"] = "healthy" if all_healthy else "unhealthy"
+
+    # Return appropriate status code
+    status_code = 200 if all_healthy else 503
+    return JSONResponse(status_code=status_code, content=health_status)
 
 
 @app.get("/status")

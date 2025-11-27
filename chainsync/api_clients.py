@@ -7,12 +7,72 @@ This module provides HTTP clients to interact with:
 """
 
 import httpx
+import asyncio
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime
 from .config import Config
 
 logger = logging.getLogger(__name__)
+
+
+async def retry_with_backoff(
+    func: Callable,
+    max_retries: int = 3,
+    initial_delay: float = 1.0,
+    max_delay: float = 16.0,
+    backoff_factor: float = 2.0
+) -> Any:
+    """
+    Retry a function with exponential backoff.
+
+    Args:
+        func: Async function to retry
+        max_retries: Maximum number of retry attempts
+        initial_delay: Initial delay in seconds
+        max_delay: Maximum delay between retries
+        backoff_factor: Multiplier for delay after each retry
+
+    Returns:
+        Result from the function call
+
+    Raises:
+        The last exception if all retries fail
+    """
+    delay = initial_delay
+    last_exception = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return await func()
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError) as e:
+            last_exception = e
+            if attempt == max_retries:
+                logger.error(f"All {max_retries} retry attempts failed: {str(e)}")
+                raise
+
+            # Calculate delay with exponential backoff
+            wait_time = min(delay, max_delay)
+            logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {wait_time}s...")
+            await asyncio.sleep(wait_time)
+            delay *= backoff_factor
+        except httpx.HTTPStatusError as e:
+            # Don't retry on 4xx errors (client errors), only on 5xx (server errors)
+            if e.response.status_code < 500:
+                logger.error(f"Client error {e.response.status_code}: {str(e)}")
+                raise
+
+            last_exception = e
+            if attempt == max_retries:
+                logger.error(f"All {max_retries} retry attempts failed: {str(e)}")
+                raise
+
+            wait_time = min(delay, max_delay)
+            logger.warning(f"Server error {e.response.status_code}. Retrying in {wait_time}s...")
+            await asyncio.sleep(wait_time)
+            delay *= backoff_factor
+
+    raise last_exception
 
 
 class SlotifyAPIClient:
@@ -82,7 +142,7 @@ class SlotifyAPIClient:
         if organizer:
             payload["organizer"] = organizer
 
-        try:
+        async def _make_request():
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     f"{self.api_url}/meetings",
@@ -90,13 +150,15 @@ class SlotifyAPIClient:
                     headers=self.headers
                 )
                 response.raise_for_status()
-                result = response.json()
+                return response.json()
 
-                logger.info(f"Created Slotify meeting: {result.get('meeting_id')}")
-                return result
+        try:
+            result = await retry_with_backoff(_make_request, max_retries=3)
+            logger.info(f"Created Slotify meeting: {result.get('meeting_id')}")
+            return result
 
         except httpx.HTTPError as e:
-            logger.error(f"Failed to create Slotify meeting: {str(e)}")
+            logger.error(f"Failed to create Slotify meeting after retries: {str(e)}")
             raise
 
     def _mock_create_meeting(self, title: str, scheduled_time: str, attendees: List[str]) -> Dict:
@@ -131,7 +193,7 @@ class SlotifyAPIClient:
             logger.warning("Slotify API key not configured.")
             return {"meeting_id": meeting_id, "updated": True, "mock": True}
 
-        try:
+        async def _make_request():
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.patch(
                     f"{self.api_url}/meetings/{meeting_id}",
@@ -141,8 +203,10 @@ class SlotifyAPIClient:
                 response.raise_for_status()
                 return response.json()
 
+        try:
+            return await retry_with_backoff(_make_request, max_retries=3)
         except httpx.HTTPError as e:
-            logger.error(f"Failed to update meeting {meeting_id}: {str(e)}")
+            logger.error(f"Failed to update meeting {meeting_id} after retries: {str(e)}")
             raise
 
     async def cancel_meeting(self, meeting_id: str, reason: Optional[str] = None) -> Dict:
@@ -222,7 +286,7 @@ class ChainSyncAPIClient:
             logger.warning("ChainSync API key not configured. Returning mock alert.")
             return {"alert_id": alert_id, "mock": True}
 
-        try:
+        async def _make_request():
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(
                     f"{self.api_url}/alerts/{alert_id}",
@@ -231,8 +295,10 @@ class ChainSyncAPIClient:
                 response.raise_for_status()
                 return response.json()
 
+        try:
+            return await retry_with_backoff(_make_request, max_retries=3)
         except httpx.HTTPError as e:
-            logger.error(f"Failed to get alert {alert_id}: {str(e)}")
+            logger.error(f"Failed to get alert {alert_id} after retries: {str(e)}")
             raise
 
     async def update_alert_status(
@@ -265,7 +331,7 @@ class ChainSyncAPIClient:
         if notes:
             payload["notes"] = notes
 
-        try:
+        async def _make_request():
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.patch(
                     f"{self.api_url}/alerts/{alert_id}",
@@ -275,8 +341,10 @@ class ChainSyncAPIClient:
                 response.raise_for_status()
                 return response.json()
 
+        try:
+            return await retry_with_backoff(_make_request, max_retries=3)
         except httpx.HTTPError as e:
-            logger.error(f"Failed to update alert {alert_id}: {str(e)}")
+            logger.error(f"Failed to update alert {alert_id} after retries: {str(e)}")
             raise
 
     async def add_alert_comment(self, alert_id: str, comment: str, author: str = "AI Agent") -> Dict:
