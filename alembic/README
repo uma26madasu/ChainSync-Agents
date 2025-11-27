@@ -1,0 +1,52 @@
+# Alembic Database Migrations
+
+This directory contains database migrations for the ChainSync-Agents project.
+
+## Usage
+
+### Create a new migration
+
+```bash
+# Auto-generate migration based on model changes
+alembic revision --autogenerate -m "Description of changes"
+
+# Create empty migration file
+alembic revision -m "Description of changes"
+```
+
+### Apply migrations
+
+```bash
+# Upgrade to latest version
+alembic upgrade head
+
+# Upgrade to specific revision
+alembic upgrade <revision_id>
+
+# Downgrade one version
+alembic downgrade -1
+
+# Downgrade to specific revision
+alembic downgrade <revision_id>
+```
+
+### View migration history
+
+```bash
+# Show current revision
+alembic current
+
+# Show migration history
+alembic history
+
+# Show detailed history
+alembic history --verbose
+```
+
+## Best Practices
+
+1. Always review auto-generated migrations before applying
+2. Test migrations on a copy of production data first
+3. Include both upgrade and downgrade paths
+4. Use descriptive migration messages
+5. Don't edit migrations that have already been applied to production
