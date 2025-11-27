@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  chainsync-agents:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chainsync-agents
+    ports:
+      - "${PYTHON_AGENT_PORT:-8000}:8000"
+    environment:
+      # OpenAI Configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+      # ChainSync API Configuration
+      - CHAINSYNC_API_URL=${CHAINSYNC_API_URL:-http://chainsync-api:8081/api}
+      - CHAINSYNC_API_KEY=${CHAINSYNC_API_KEY}
+
+      # Slotify API Configuration
+      - SLOTIFY_API_URL=${SLOTIFY_API_URL:-https://api.slotify.com/v1}
+      - SLOTIFY_API_KEY=${SLOTIFY_API_KEY}
+
+      # Webhook Security
+      - WEBHOOK_API_KEY=${WEBHOOK_API_KEY}
+      - WEBHOOK_SECRET_KEY=${WEBHOOK_SECRET_KEY}
+
+      # Database Configuration
+      - DATABASE_URL=postgresql://chainsync:chainsync_password@postgres:5432/chainsync_agents
+
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379/0
+
+      # Server Configuration
+      - PYTHON_AGENT_PORT=8000
+      - DEBUG=False
+      - LOG_LEVEL=INFO
+
+      # CORS Configuration
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:8000}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    volumes:
+      - ./logs:/app/logs
+
+    networks:
+      - chainsync-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: chainsync-postgres
+    environment:
+      - POSTGRES_DB=chainsync_agents
+      - POSTGRES_USER=chainsync
+      - POSTGRES_PASSWORD=chainsync_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - chainsync-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chainsync"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: chainsync-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - chainsync-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  chainsync-network:
+    driver: bridge
