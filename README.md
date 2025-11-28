@@ -158,6 +158,102 @@ The agents work together in coordinated workflows:
 - Generates discussion points and pre-meeting summary
 - Learns from alert patterns for future improvements
 
+---
+
+## 🚨 Alert-Based Meeting Scheduler (Production Ready!)
+
+**Automatically schedule meetings with the right authorities based on ChainSync alert severity and type.**
+
+### ✨ Key Features
+
+- ✅ **Automatic Meeting Scheduling** - Triggers Slotify meetings based on alert severity
+- ✅ **Smart Authority Selection** - Invites the right stakeholders based on alert type
+- ✅ **AI-Powered Context** - Generates meeting agendas, discussion points, and summaries
+- ✅ **Escalation Logic** - Automatically escalates critical issues to management
+- ✅ **Multi-Framework Compliance** - Tracks SOC2, GDPR, HIPAA, ISO27001, PCI-DSS violations
+- ✅ **Full Database Tracking** - Maintains audit trail of all alerts and meetings
+
+### 🎯 How It Works
+
+```
+ChainSync Alert → AI Analysis → Meeting Scheduled → Authorities Notified
+```
+
+When a ChainSync alert is received:
+1. **Root Cause Analysis** - AI identifies the underlying issue
+2. **Compliance Check** - Verifies regulatory implications
+3. **Urgency Calculation** - Determines meeting priority (CRITICAL/HIGH/MEDIUM/LOW)
+4. **Authority Selection** - Automatically invites appropriate stakeholders
+5. **Context Generation** - Creates meeting agenda and discussion points
+6. **Slotify Integration** - Schedules meeting and sends invitations
+
+### 📋 Alert Types & Authorities
+
+| Alert Type | Severity | Response Time | Key Attendees |
+|-----------|----------|---------------|---------------|
+| **Security Incident** | CRITICAL | < 1 hour | Security Team, CISO, Legal, Exec Sponsor |
+| **System Failure** | CRITICAL | < 1 hour | DevOps, SRE, Engineering Lead, Management |
+| **Compliance Violation** | HIGH | < 4 hours | Compliance Officer, Legal, Security, Exec |
+| **Integration Failure** | HIGH | < 4 hours | Integration Team, API Team, MuleSoft Admin |
+| **Performance Degradation** | MEDIUM | < 24 hours | Engineering, DevOps, Product |
+| **Data Quality Issue** | MEDIUM | < 24 hours | Data Engineering, Analytics, QA |
+| **Capacity Warning** | LOW | < 48 hours | Infrastructure, DevOps, FinOps |
+
+### ⚡ Quick Start
+
+**1. Send an Alert Webhook**
+```bash
+curl -X POST http://localhost:8000/webhooks/chainsync/alert \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-webhook-api-key" \
+  -d '{
+    "alert_id": "SEC-2025-001",
+    "alert_type": "security_incident",
+    "severity": "critical",
+    "description": "Unauthorized access attempt detected",
+    "affected_systems": ["prod-db-01", "auth-service"],
+    "detected_at": "2025-11-28T10:00:00Z",
+    "compliance_frameworks": ["SOC2", "ISO27001"]
+  }'
+```
+
+**2. Meeting Automatically Scheduled** ✅
+- Urgency: CRITICAL
+- Response Time: < 1 hour
+- Duration: 60 minutes
+- Attendees: Security Team, CISO, Legal, Management, Executive Sponsor
+- AI-generated agenda and discussion points included
+
+### 🧪 Run the Demo
+
+```bash
+# Demo all alert types
+python examples/alert_based_meeting_demo.py all
+
+# Show authority mappings
+python examples/alert_based_meeting_demo.py mappings
+
+# Test specific alert type
+python examples/alert_based_meeting_demo.py critical_security
+```
+
+### 📚 Documentation
+
+- **[Complete Guide](docs/ALERT_BASED_MEETING_SCHEDULER.md)** - Full documentation with examples
+- **[Quick Reference](docs/ALERT_AUTHORITIES_QUICK_REFERENCE.md)** - Cheat sheet for alert types
+- **[Configuration](config/alert_authorities.yaml)** - Customize authority lists
+
+### 🎨 Customization
+
+Edit `config/alert_authorities.yaml` to customize:
+- Authority lists for each alert type
+- Escalation rules
+- Meeting durations
+- Notification settings
+- Custom alert types
+
+---
+
 ## 🏗️ Architecture Overview
 
 ### 🐍 Python AI Agent Layer
@@ -567,23 +663,36 @@ python -m pytest --cov=chainsync tests/
 
 ```
 ChainSync-Agents/
-├── main.py                          # Application entry point with demos
-├── requirements.txt                 # Python dependencies
-├── .env.example                     # Environment configuration template
-├── chainsync/                       # Core application package
-│   ├── __init__.py                 # Package initialization
-│   ├── config.py                   # Configuration management
-│   ├── ai_agent.py                 # Legacy AI agent (deprecated)
-│   ├── domain_manager.py           # Domain-specific logic handler
-│   ├── specialized_agents.py       # 7 specialized AI agents
-│   └── agent_orchestrator.py       # Multi-agent coordination
-├── docs/                           # Documentation
-│   ├── architecture.md             # Architecture design
-│   ├── api_documentation.md        # API specifications
-│   └── deployment_guide.md         # Deployment instructions
-└── tests/                          # Test suite
-    ├── test_ai_agent.py            # AI agent tests
-    └── test_integration.py         # Integration tests
+├── main.py                                    # Application entry point with demos
+├── requirements.txt                           # Python dependencies
+├── .env.example                               # Environment configuration template
+├── chainsync/                                 # Core application package
+│   ├── __init__.py                           # Package initialization
+│   ├── config.py                             # Configuration management
+│   ├── ai_agent.py                           # Legacy AI agent (deprecated)
+│   ├── domain_manager.py                     # Domain-specific logic handler
+│   ├── specialized_agents.py                 # 7 specialized AI agents
+│   ├── agent_orchestrator.py                 # Multi-agent coordination
+│   ├── webhook_server.py                     # Webhook endpoints for ChainSync/Slotify
+│   ├── api_clients.py                        # SlotifyAPI & ChainSync API clients
+│   ├── database.py                           # Database models and repositories
+│   └── security.py                           # Authentication and security
+├── config/                                    # Configuration files
+│   └── alert_authorities.yaml                # Alert-based meeting scheduler config
+├── examples/                                  # Example scripts
+│   └── alert_based_meeting_demo.py           # Alert-to-meeting demo script
+├── docs/                                      # Documentation
+│   ├── architecture.md                       # Architecture design
+│   ├── api_documentation.md                  # API specifications
+│   ├── deployment_guide.md                   # Deployment instructions
+│   ├── ALERT_BASED_MEETING_SCHEDULER.md      # Alert scheduler complete guide
+│   ├── ALERT_AUTHORITIES_QUICK_REFERENCE.md  # Quick reference cheat sheet
+│   └── INTEGRATION_GUIDE.md                  # Integration guide
+└── tests/                                     # Test suite
+    ├── test_ai_agent.py                      # AI agent tests
+    ├── test_integration.py                   # Integration tests
+    ├── test_meeting_context_agent.py         # Meeting context agent tests
+    └── test_webhook_server.py                # Webhook server tests
 ```
 
 ## 🔧 Configuration Options
