@@ -1,0 +1,413 @@
+# Alert-Based Meeting Scheduler - Concerned Authorities Configuration
+#
+# This file defines which authorities/stakeholders should be automatically
+# invited to meetings based on the alert type and severity.
+#
+# Customize this file to match your organization's structure.
+
+# ============================================================================
+# ALERT TYPE CONFIGURATIONS
+# ============================================================================
+# Each alert type defines:
+#   - severity_weight: Multiplier for urgency calculation (0.0 - 1.0)
+#   - category: Alert classification
+#   - typical_attendees: Base list of roles/people to invite
+#   - email_addresses: Actual email addresses (optional)
+# ============================================================================
+
+alert_types:
+
+  # ---------------------------------------------------------------------------
+  # COMPLIANCE VIOLATIONS
+  # ---------------------------------------------------------------------------
+  compliance_violation:
+    severity_weight: 0.9
+    category: Compliance
+    description: Regulatory or policy compliance issues
+
+    typical_attendees:
+      - Compliance Officer
+      - Legal Team
+      - IT Security Lead
+      - Risk Manager
+
+    # Customize with actual email addresses for your organization:
+    email_addresses:
+      - compliance@yourcompany.com
+      - legal@yourcompany.com
+      - security-lead@yourcompany.com
+      - risk@yourcompany.com
+
+    # Frameworks that trigger this alert
+    compliance_frameworks:
+      - SOC2
+      - GDPR
+      - HIPAA
+      - ISO27001
+      - PCI-DSS
+      - CCPA
+
+  # ---------------------------------------------------------------------------
+  # SYSTEM FAILURES
+  # ---------------------------------------------------------------------------
+  system_failure:
+    severity_weight: 1.0
+    category: Operations
+    description: Critical system outages or failures
+
+    typical_attendees:
+      - DevOps Lead
+      - Engineering Lead
+      - SRE Team
+      - Infrastructure Manager
+      - On-Call Engineer
+
+    email_addresses:
+      - devops-lead@yourcompany.com
+      - eng-lead@yourcompany.com
+      - sre-team@yourcompany.com
+      - infra-manager@yourcompany.com
+      - oncall@yourcompany.com
+
+  # ---------------------------------------------------------------------------
+  # PERFORMANCE DEGRADATION
+  # ---------------------------------------------------------------------------
+  performance_degradation:
+    severity_weight: 0.7
+    category: Performance
+    description: System performance issues and slowness
+
+    typical_attendees:
+      - Engineering Team
+      - DevOps Team
+      - Product Manager
+      - Performance Engineer
+
+    email_addresses:
+      - engineering@yourcompany.com
+      - devops@yourcompany.com
+      - product@yourcompany.com
+      - performance@yourcompany.com
+
+  # ---------------------------------------------------------------------------
+  # SECURITY INCIDENTS
+  # ---------------------------------------------------------------------------
+  security_incident:
+    severity_weight: 1.0
+    category: Security
+    description: Security breaches, intrusions, or vulnerabilities
+
+    typical_attendees:
+      - Security Team
+      - CISO
+      - Legal Team
+      - Incident Response Team
+      - Communications/PR
+
+    email_addresses:
+      - security@yourcompany.com
+      - ciso@yourcompany.com
+      - legal@yourcompany.com
+      - incident-response@yourcompany.com
+      - pr@yourcompany.com
+
+    # Additional security-specific settings
+    auto_escalate: true
+    require_executive: true
+
+  # ---------------------------------------------------------------------------
+  # DATA QUALITY ISSUES
+  # ---------------------------------------------------------------------------
+  data_quality_issue:
+    severity_weight: 0.6
+    category: Data
+    description: Data integrity, accuracy, or quality problems
+
+    typical_attendees:
+      - Data Engineering Lead
+      - Analytics Team
+      - QA Lead
+      - Data Steward
+
+    email_addresses:
+      - data-eng@yourcompany.com
+      - analytics@yourcompany.com
+      - qa-lead@yourcompany.com
+      - data-steward@yourcompany.com
+
+  # ---------------------------------------------------------------------------
+  # INTEGRATION FAILURES
+  # ---------------------------------------------------------------------------
+  integration_failure:
+    severity_weight: 0.8
+    category: Integration
+    description: API or system integration failures
+
+    typical_attendees:
+      - Integration Team
+      - MuleSoft Administrator
+      - API Team
+      - Partner Relations
+
+    email_addresses:
+      - integrations@yourcompany.com
+      - mulesoft-admin@yourcompany.com
+      - api-team@yourcompany.com
+      - partner-relations@yourcompany.com
+
+  # ---------------------------------------------------------------------------
+  # CAPACITY WARNINGS
+  # ---------------------------------------------------------------------------
+  capacity_warning:
+    severity_weight: 0.5
+    category: Infrastructure
+    description: Resource capacity approaching limits
+
+    typical_attendees:
+      - Infrastructure Team
+      - DevOps Team
+      - Finance/FinOps
+      - Capacity Planning
+
+    email_addresses:
+      - infrastructure@yourcompany.com
+      - devops@yourcompany.com
+      - finops@yourcompany.com
+      - capacity-planning@yourcompany.com
+
+
+# ============================================================================
+# ESCALATION RULES
+# ============================================================================
+# Define when to escalate and add additional stakeholders
+# ============================================================================
+
+escalation_rules:
+
+  # Add management for high-severity alerts
+  high_severity_escalation:
+    trigger:
+      severity: ["critical", "high"]
+    additional_attendees:
+      - Engineering Manager
+      - Operations Manager
+    email_addresses:
+      - eng-manager@yourcompany.com
+      - ops-manager@yourcompany.com
+
+  # Add executives for critical compliance/security
+  executive_escalation:
+    trigger:
+      severity: ["critical", "high"]
+      alert_type: ["compliance_violation", "security_incident"]
+    additional_attendees:
+      - Executive Sponsor
+      - CTO
+      - VP Engineering
+    email_addresses:
+      - exec-sponsor@yourcompany.com
+      - cto@yourcompany.com
+      - vp-eng@yourcompany.com
+
+  # Add customer success for customer-facing issues
+  customer_impact_escalation:
+    trigger:
+      severity: ["critical", "high"]
+      alert_type: ["system_failure", "performance_degradation"]
+      context:
+        customer_facing: true
+    additional_attendees:
+      - Customer Success Lead
+      - Support Manager
+    email_addresses:
+      - customer-success@yourcompany.com
+      - support-manager@yourcompany.com
+
+
+# ============================================================================
+# MEETING DURATION SETTINGS
+# ============================================================================
+# Customize meeting duration based on severity and complexity
+# ============================================================================
+
+meeting_duration:
+  critical:
+    default: 60  # minutes
+    max_duration: 90
+    min_duration: 45
+
+  high:
+    default: 45
+    max_duration: 60
+    min_duration: 30
+
+  medium:
+    default: 30
+    max_duration: 45
+    min_duration: 15
+
+  low:
+    default: 15
+    max_duration: 30
+    min_duration: 15
+
+
+# ============================================================================
+# URGENCY CALCULATION
+# ============================================================================
+# Define urgency levels and response time requirements
+# ============================================================================
+
+urgency_levels:
+  critical:
+    threshold: 0.8
+    response_time: "< 1 hour"
+    notification_channels: ["email", "sms", "slack", "pagerduty"]
+
+  high:
+    threshold: 0.6
+    response_time: "< 4 hours"
+    notification_channels: ["email", "slack"]
+
+  medium:
+    threshold: 0.4
+    response_time: "< 24 hours"
+    notification_channels: ["email"]
+
+  low:
+    threshold: 0.0
+    response_time: "< 48 hours"
+    notification_channels: ["email"]
+
+
+# ============================================================================
+# CUSTOM ALERT TYPES
+# ============================================================================
+# Add your own custom alert types here
+# ============================================================================
+
+custom_alert_types:
+
+  # Example: Customer SLA Breach
+  sla_breach:
+    severity_weight: 0.85
+    category: Customer Success
+    description: Customer SLA commitments at risk or breached
+
+    typical_attendees:
+      - Account Manager
+      - Customer Success Lead
+      - Engineering Lead
+      - Support Manager
+
+    email_addresses:
+      - account-mgr@yourcompany.com
+      - cs-lead@yourcompany.com
+      - eng-lead@yourcompany.com
+      - support@yourcompany.com
+
+  # Example: Cost Overrun
+  cost_overrun:
+    severity_weight: 0.7
+    category: Financial
+    description: Cloud costs exceeding budget thresholds
+
+    typical_attendees:
+      - FinOps Lead
+      - Infrastructure Manager
+      - Finance Team
+      - Engineering Manager
+
+    email_addresses:
+      - finops@yourcompany.com
+      - infra-manager@yourcompany.com
+      - finance@yourcompany.com
+      - eng-manager@yourcompany.com
+
+
+# ============================================================================
+# NOTIFICATION SETTINGS
+# ============================================================================
+
+notifications:
+
+  # Pre-meeting notification timing
+  pre_meeting_notifications:
+    - time: "24 hours"
+      message: "Meeting scheduled - please review pre-meeting summary"
+    - time: "1 hour"
+      message: "Meeting starting soon - please join"
+
+  # Reminder settings
+  reminders:
+    enabled: true
+    intervals: ["24h", "1h", "15m"]
+
+  # Communication channels
+  channels:
+    email:
+      enabled: true
+      from: "alerts@yourcompany.com"
+
+    slack:
+      enabled: true
+      webhook_url: "${SLACK_WEBHOOK_URL}"
+      channel: "#incident-response"
+
+    pagerduty:
+      enabled: false
+      integration_key: "${PAGERDUTY_INTEGRATION_KEY}"
+
+    teams:
+      enabled: false
+      webhook_url: "${TEAMS_WEBHOOK_URL}"
+
+
+# ============================================================================
+# BUSINESS HOURS AND SCHEDULING
+# ============================================================================
+
+scheduling:
+
+  # Business hours (for non-critical alerts)
+  business_hours:
+    timezone: "America/New_York"
+    monday_friday:
+      start: "09:00"
+      end: "17:00"
+    saturday_sunday:
+      enabled: false
+
+  # Critical alerts can schedule outside business hours
+  critical_override_business_hours: true
+
+  # Buffer times
+  minimum_notice: "30 minutes"  # Minimum time before meeting starts
+  maximum_advance: "7 days"     # Maximum time in advance to schedule
+
+
+# ============================================================================
+# INTEGRATION SETTINGS
+# ============================================================================
+
+integrations:
+
+  chainsync:
+    auto_update_status: true
+    add_comments: true
+    attach_meeting_link: true
+
+  slotify:
+    default_organizer: "ai-agent@yourcompany.com"
+    calendar_type: "work"
+    send_invites: true
+    allow_conflicts: false
+
+  calendar_platforms:
+    google_calendar:
+      enabled: false
+      calendar_id: "${GOOGLE_CALENDAR_ID}"
+
+    microsoft_outlook:
+      enabled: false
+      calendar_id: "${OUTLOOK_CALENDAR_ID}"
